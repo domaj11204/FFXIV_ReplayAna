@@ -6,6 +6,29 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
+from google.cloud import storage
+
+def download_from_gcs(bucket_name: str, blob_name: str, dest_path: str) -> bool:
+    """
+    從指定的 GCS Bucket 中下載指定的 blob 檔案至本地 dest_path。
+    如果下載成功，回傳 True；若檔案不存在或下載失敗，回傳 False。
+    """
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        if blob.exists():
+            # 確保目標目錄存在
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            blob.download_to_filename(dest_path)
+            print(f"成功自 GCS Bucket [{bucket_name}] 下載 {blob_name} 至 {dest_path}")
+            return True
+        else:
+            print(f"GCS Bucket [{bucket_name}] 中找不到資源: {blob_name}")
+            return False
+    except Exception as e:
+        print(f"自 GCS 下載資源 [{blob_name}] 失敗: {str(e)}")
+        return False
 
 app = FastAPI(
     title="FFXIV Wipe Analyzer API",
@@ -49,6 +72,11 @@ def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) ->
         'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360]/worstvideo/worst',
         'quiet': True,
         'no_warnings': True,
+        'extractor_args': {
+            'youtube': {
+                'client': ['ios', 'android']
+            }
+        }
     }
     if cookies_path:
         ydl_opts['cookiefile'] = cookies_path
@@ -266,10 +294,20 @@ def verify_restart_text(
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_video(request: AnalyzeRequest):
-    # 1. 驗證模板圖片是否存在
+    # 1. 取得並驗證模板圖片
     template_path = request.template_name
+    gcs_bucket = os.environ.get("GCS_BUCKET_NAME")
+    
+    # 如果本地找不到模板，且有配置 GCS_BUCKET_NAME，嘗試從 GCS 下載至 /tmp
     if not os.path.exists(template_path):
-        raise HTTPException(status_code=404, detail=f"找不到指定的模板圖片: {template_path}，請先上傳圖片。")
+        if gcs_bucket:
+            temp_path = os.path.join("/tmp", template_path)
+            print(f"本地找不到模板 [{template_path}]，嘗試自 GCS Bucket [{gcs_bucket}] 下載...")
+            if download_from_gcs(gcs_bucket, template_path, temp_path):
+                template_path = temp_path
+
+    if not os.path.exists(template_path):
+        raise HTTPException(status_code=404, detail=f"找不到指定的模板圖片: {template_path}，本地或 GCS 均無此檔案。")
         
     template_img = cv2.imread(template_path)
     if template_img is None:
@@ -283,6 +321,12 @@ async def analyze_video(request: AnalyzeRequest):
         temp_cookie_file.write(request.cookies_content)
         temp_cookie_file.close()
         cookies_path = temp_cookie_file.name
+    elif gcs_bucket:
+        # 如果請求沒傳，但有設定 GCS_BUCKET_NAME，嘗試從 GCS 下載 cookies.txt 到 /tmp
+        dest_cookie_path = os.path.join("/tmp", "cookies.txt")
+        print(f"嘗試自 GCS Bucket [{gcs_bucket}] 下載 cookies.txt...")
+        if download_from_gcs(gcs_bucket, "cookies.txt", dest_cookie_path):
+            cookies_path = dest_cookie_path
         
     try:
         # 2. 獲取 YouTube 影片直鏈與中介資料
@@ -293,6 +337,12 @@ async def analyze_video(request: AnalyzeRequest):
         if cookies_path and os.path.exists(cookies_path):
             try:
                 os.remove(cookies_path)
+            except Exception:
+                pass
+        # 確保清理 GCS 下載到 /tmp 的臨時模板圖片，避免磁碟空間溢出
+        if gcs_bucket and template_path.startswith("/tmp") and os.path.exists(template_path):
+            try:
+                os.remove(template_path)
             except Exception:
                 pass
 

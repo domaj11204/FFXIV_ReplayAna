@@ -33,19 +33,34 @@ uv run python test_first_11m.py
 
 ---
 
-## ☁️ Google Cloud Build 雲端建置與部署 (Cloud Run)
+## ☁️ Google Cloud Build 與 GCS 整合部署 (Cloud Run)
 
-專案已配置適用於 Cloud Run 的 [Dockerfile](Dockerfile)。為保障安全性，部署時**限制了未授權的公共存取 (`--no-allow-unauthenticated`)**，僅限 IAM 授權身分或透過本地 Proxy 存取。
+專案配置了私有部署 (`--no-allow-unauthenticated`)。敏感的 YouTube `cookies.txt` 與 RESTART 模板圖片可以上傳到 **Google Cloud Storage (GCS) Bucket** 中，由 Cloud Run 執行時動態下載，方便隨時更新。
 
-### 1. 部署命令 (自動觸發 Cloud Build)
-在專案目錄下執行以下指令，GCP 將會使用 Cloud Build 自動於雲端編譯並部署為私有服務：
+### 1. 建立 GCS Bucket 並上傳資源
+請在專案目錄下執行以下指令建立私有儲存桶，並上傳預設資源：
+```bash
+# 建立專屬私有 GCS Bucket (例如台灣 asia-east1 區域)
+gcloud storage buckets create gs://inspiring-bee-481116-m0-ffxiv-assets \
+  --location=asia-east1 \
+  --project="inspiring-bee-481116-m0"
+
+# 上傳您的 YouTube cookies.txt 與預設匹配模板圖片
+gcloud storage cp cookies.txt gs://inspiring-bee-481116-m0-ffxiv-assets/
+gcloud storage cp restart_template.png gs://inspiring-bee-481116-m0-ffxiv-assets/
+```
+
+### 2. 部署程式碼至 Cloud Run (綁定 GCS Bucket)
+使用以下指令部署。我們將透過環境變數 `GCS_BUCKET_NAME` 將容器連結至該 Bucket：
 ```bash
 gcloud run deploy ffxiv-replay-ana \
   --source . \
   --region asia-east1 \
   --no-allow-unauthenticated \
   --service-account="antigravity@inspiring-bee-481116-m0.iam.gserviceaccount.com" \
-  --project="inspiring-bee-481116-m0"
+  --project="inspiring-bee-481116-m0" \
+  --set-env-vars GCS_BUCKET_NAME="inspiring-bee-481116-m0-ffxiv-assets" \
+  --quiet
 ```
 
 *若使用自定義 `cloudbuild.yaml` 進行 CI/CD 流水線編譯，請參考：*
@@ -55,24 +70,16 @@ gcloud builds submit --config=cloudbuild.yaml --project="inspiring-bee-481116-m0
 
 ---
 
-## 🔒 安全測試：使用本地認證 Proxy (Local Auth Proxy)
+## 🔒 安全授權測試 (E2E Verification)
 
-由於 Cloud Run 服務已被設為私有 (Private)，直接存取其 URL 會收到 `403 Forbidden` 錯誤。我們可以使用 `gcloud` 本地認證代理將請求導向雲端服務：
+由於 Cloud Run 服務已被設為私有，本地測試腳本 [test_first_11m.py](test_first_11m.py) 已整合了自動化認證與驗證流程：
 
-### 1. 啟動本地 Proxy
-在您的終端機中執行以下指令（這會自動以您的 GCP 登入憑證來簽發 ID Token 並建立安全通道）：
+1. **認證金鑰簽發**：腳本會自動調用本地的 `gcloud` 獲取合法的 Identity Token。
+2. **自動 Cookie 輔助**：若本地瀏覽器（Chrome/Edge/Firefox）已登入 YouTube，腳本會自動提取該 Cookie 作為分析參數發送，避開 GCP IP 遭到封鎖的 Bot Check。
+
+### 執行分析測試
 ```bash
-gcloud run services proxy ffxiv-replay-ana \
-  --region=asia-east1 \
-  --project=inspiring-bee-481116-m0
-```
-啟動後，代理伺服器會監聽本地的連接埠（預設為 `http://127.0.0.1:8080`）。
-
-### 2. 透過 Proxy 發送測試請求
-當 Proxy 運作時，您可以直接向本地的 `8080` 埠發送 HTTP 請求，Proxy 會自動加上 IAM 驗證標頭並轉發給雲端的私有 Cloud Run：
-
-```bash
-# 執行本地的 11 分鐘測試腳本 (該腳本預設即向 localhost:8080 發送請求)
+# 本地執行 E2E 測試 (預設指向部署好的 Cloud Run 私有 URL)
 uv run python test_first_11m.py
 ```
-這將會安全地調用您佈署在 GCP Cloud Run 上的服務，並回傳分析結果！
+這將會透過安全通道將請求發送給雲端的私有 Cloud Run，並由雲端進行 11 分鐘的 Wipe 分析後回傳 JSON 結果！
