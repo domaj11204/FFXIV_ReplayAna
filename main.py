@@ -23,6 +23,7 @@ class AnalyzeRequest(BaseModel):
     y_max: float = Field(0.50, ge=0.0, le=1.0, description="偵測區域下邊界比例 (0.0~1.0)")
     threshold: float = Field(0.65, ge=0.0, le=1.0, description="RESTART 模板比對相似度閾值")
     scan_duration_limit: float = Field(0.0, description="限制掃描影片的前 N 秒，0.0 表示不限制")
+    cookies_content: str | None = Field(None, description="YouTube Cookie 檔案內容，用以避免 YouTube Bot 阻擋驗證")
 
 # 單個 Wipe 事件的輸出模型
 class WipeEvent(BaseModel):
@@ -39,7 +40,7 @@ class AnalyzeResponse(BaseModel):
     video_duration_seconds: float
     wipes: list[WipeEvent]
 
-def get_youtube_video_info(youtube_url: str) -> dict:
+def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) -> dict:
     """
     使用 yt-dlp 取得影片的直鏈網址、標題與尺寸資訊。
     為加速處理，優先取得低解析度 (如 360p) 的影片唯視訊串流，以節省下載流量與解碼效能。
@@ -49,6 +50,11 @@ def get_youtube_video_info(youtube_url: str) -> dict:
         'quiet': True,
         'no_warnings': True,
     }
+    if cookies_path:
+        ydl_opts['cookiefile'] = cookies_path
+    elif os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = "cookies.txt"
+
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
@@ -269,9 +275,27 @@ async def analyze_video(request: AnalyzeRequest):
     if template_img is None:
         raise HTTPException(status_code=400, detail=f"無法成功解碼圖片檔案: {template_path}")
         
-    # 2. 獲取 YouTube 影片直鏈與中介資料
-    print(f"正在解析影片: {request.youtube_url}")
-    video_info = get_youtube_video_info(request.youtube_url)
+    # 處理動態傳入的 Cookie
+    cookies_path = None
+    if request.cookies_content:
+        import tempfile
+        temp_cookie_file = tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt', encoding='utf-8')
+        temp_cookie_file.write(request.cookies_content)
+        temp_cookie_file.close()
+        cookies_path = temp_cookie_file.name
+        
+    try:
+        # 2. 獲取 YouTube 影片直鏈與中介資料
+        print(f"正在解析影片: {request.youtube_url}")
+        video_info = get_youtube_video_info(request.youtube_url, cookies_path=cookies_path)
+    finally:
+        # 確保清理臨時 Cookie 檔
+        if cookies_path and os.path.exists(cookies_path):
+            try:
+                os.remove(cookies_path)
+            except Exception:
+                pass
+
     stream_url = video_info['stream_url']
     video_w = video_info['width']
     video_h = video_info['height']
