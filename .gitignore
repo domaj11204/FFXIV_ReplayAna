@@ -12,4 +12,7 @@ wheels/
 # Test artifacts & local configs
 .python-version
 roi_center.png
+*.json
+.gcloud_config/
+
 
