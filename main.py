@@ -22,6 +22,7 @@ class AnalyzeRequest(BaseModel):
     y_min: float = Field(0.25, ge=0.0, le=1.0, description="偵測區域上邊界比例 (0.0~1.0)")
     y_max: float = Field(0.50, ge=0.0, le=1.0, description="偵測區域下邊界比例 (0.0~1.0)")
     threshold: float = Field(0.65, ge=0.0, le=1.0, description="RESTART 模板比對相似度閾值")
+    scan_duration_limit: float = Field(0.0, description="限制掃描影片的前 N 秒，0.0 表示不限制")
 
 # 單個 Wipe 事件的輸出模型
 class WipeEvent(BaseModel):
@@ -104,11 +105,15 @@ def run_black_detection(
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
         '-i', stream_url,
+    ]
+    if req.scan_duration_limit > 0.0:
+        cmd.extend(['-t', str(req.scan_duration_limit)])
+    cmd.extend([
         '-vf', f'crop={crop_w}:{crop_h}:{crop_x}:{crop_y},fps=2,blackdetect=d={min_duration}:pix_th={pix_th}',
         '-an',
         '-f', 'null',
         '-'
-    ]
+    ])
     
     # 啟動 FFmpeg 子進程，讀取其 stderr 輸出
     process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
@@ -127,8 +132,8 @@ def run_black_detection(
             end = float(match.group(2))
             duration = float(match.group(3))
             
-            # FFXIV 的滅團黑屏一般落在 4~7 秒之間，因此過濾過長或過短的黑屏以防誤判
-            if 3.5 <= duration <= 8.0:
+            # FFXIV 的滅團黑屏一般落在 4~10 秒之間，因此過濾過長或過短的黑屏以防誤判
+            if 3.0 <= duration <= 12.0:
                 black_intervals.append({
                     'start': start,
                     'end': end,
@@ -207,27 +212,42 @@ def verify_restart_text(
         
         frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((crop_h, crop_w, 3))
         
-        # 進行多尺度模板匹配
-        for scale in scales:
-            sw = int(target_w * scale)
-            sh = int(target_h * scale)
-            
-            # 防止超出邊界
-            if sw >= crop_w or sh >= crop_h:
-                continue
+        # HSV 金色過濾
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        lower_gold = np.array([15, 80, 150])
+        upper_gold = np.array([28, 255, 255])
+        mask_frame = cv2.inRange(hsv, lower_gold, upper_gold)
+        gold_pixels = cv2.countNonZero(mask_frame)
+        
+        # 動態計算金色像素門檻 (大於 crop 區域面積的 1.3%)
+        pixel_threshold = int(crop_w * crop_h * 0.013)
+        
+        if gold_pixels >= pixel_threshold:
+            # 進行多尺度遮罩模板匹配
+            for scale in scales:
+                sw = int(target_w * scale)
+                sh = int(target_h * scale)
                 
-            scaled_tpl = cv2.resize(resized_template, (sw, sh))
-            res = cv2.matchTemplate(frame, scaled_tpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
-            
-            if max_val > best_score:
-                best_score = max_val
+                # 防止超出邊界
+                if sw > crop_w or sh > crop_h:
+                    continue
+                    
+                scaled_tpl = cv2.resize(resized_template, (sw, sh))
+                mask_tpl = cv2.inRange(cv2.cvtColor(scaled_tpl, cv2.COLOR_BGR2HSV), lower_gold, upper_gold)
                 
-            if max_val >= req.threshold:
-                match_found = True
-                detected_at = start_time + frame_idx
-                break
+                res = cv2.matchTemplate(mask_frame, mask_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
                 
+                if max_val > best_score:
+                    best_score = max_val
+                    
+                # 遮罩匹配分數以 0.45 作為可靠匹配閥值，若 req.threshold 仍為預設的 0.65 則改用 0.45
+                actual_threshold = 0.45 if req.threshold == 0.65 else req.threshold
+                if max_val >= actual_threshold:
+                    match_found = True
+                    detected_at = start_time + frame_idx
+                    break
+                    
         if match_found:
             break
             

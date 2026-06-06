@@ -7,7 +7,8 @@ def main():
     data = {
         "youtube_url": "https://www.youtube.com/live/zG68yxff90s",
         "template_name": "restart_template.png",
-        "threshold": 0.65
+        "threshold": 0.65,
+        "scan_duration_limit": 660.0 # 限制掃描前 11 分鐘
     }
     
     req = urllib.request.Request(
@@ -18,7 +19,7 @@ def main():
     )
     
     try:
-        print("正在發送測試請求至 API (此影片長約 82 分鐘，請耐心等待)...")
+        print("正在發送測試請求至 API (限制分析前 11 分鐘)...")
         start_time = time.time()
         with urllib.request.urlopen(req) as response:
             res_body = response.read().decode("utf-8")
@@ -30,7 +31,6 @@ def main():
         print(e.read().decode("utf-8"))
     except Exception as e:
         print(f"發生錯誤: {e}")
-
 
 if __name__ == "__main__":
     main()
