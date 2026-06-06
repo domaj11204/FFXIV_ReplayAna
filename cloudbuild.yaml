@@ -1,0 +1,23 @@
+steps:
+  # 1. 建立 Docker 映像檔
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build', 
+      '-t', 'asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ffxiv-replay-ana:$COMMIT_SHA', 
+      '-t', 'asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ffxiv-replay-ana:latest', 
+      '.'
+    ]
+
+  # 2. 推送映像檔至 Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ffxiv-replay-ana:$COMMIT_SHA']
+
+  # 3. 部署至 Cloud Run (限制未授權存取)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args: [
+      'run', 'deploy', 'ffxiv-replay-ana',
+      '--image', 'asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ffxiv-replay-ana:$COMMIT_SHA',
+      '--region', 'asia-east1',
+      '--no-allow-unauthenticated'
+    ]
