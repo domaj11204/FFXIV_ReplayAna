@@ -23,7 +23,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md /app/
 
 # 在系統環境中同步安裝依賴套件（Cloud Run 不需要虛擬環境，直接安裝於系統可簡化指令與容器大小）
-RUN uv sync --system --no-dev
+RUN uv sync --system --no-dev --no-install-project
 
 # 拷貝核心程式碼與預設的 RESTART 模板圖片
 COPY main.py restart_template.png /app/
