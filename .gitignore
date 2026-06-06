@@ -14,5 +14,7 @@ wheels/
 roi_center.png
 *.json
 .gcloud_config/
+cookies.txt
+*cookies*.txt
 
 
