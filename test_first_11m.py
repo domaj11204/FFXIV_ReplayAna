@@ -55,6 +55,52 @@ def extract_local_cookies():
     print("無法自本地瀏覽器提取 Cookie，將不帶 Cookie 進行分析。")
     return None
 
+def get_local_direct_link(youtube_url, cookies_content=None):
+    import tempfile
+    temp_txt = None
+    try:
+        print("正在本地解析 YouTube 影片直鏈 (以避開雲端 IP 阻擋)...")
+        cookies_path = None
+        if cookies_content:
+            temp_txt = tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt', encoding='utf-8')
+            temp_txt.write(cookies_content)
+            temp_txt.close()
+            cookies_path = temp_txt.name
+            
+        runner = [sys.executable, "-m", "yt_dlp"]
+        cmd = runner + ["-g", "-f", "bestvideo[height<=360]/worstvideo/worst"]
+        if cookies_path:
+            cmd.extend(["--cookies", cookies_path])
+        cmd.append(youtube_url)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=15)
+            direct_url = result.stdout.strip()
+            if direct_url:
+                print("本地直鏈解析成功！")
+                return direct_url
+        except Exception:
+            pass
+            
+        # Fallback: 不帶任何 Cookie 解析
+        cmd = runner + ["-g", "-f", "bestvideo[height<=360]/worstvideo/worst", youtube_url]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=15)
+            direct_url = result.stdout.strip()
+            if direct_url:
+                print("本地直鏈解析成功 (無 Cookie)！")
+                return direct_url
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"本地直鏈解析失敗: {e}")
+    finally:
+        if temp_txt and os.path.exists(temp_txt.name):
+            try:
+                os.remove(temp_txt.name)
+            except Exception:
+                pass
+    return None
+
 def main():
     # 預設的 Cloud Run 網址
     cloud_run_url = "https://ffxiv-replay-ana-471169883214.asia-east1.run.app/analyze"
@@ -70,8 +116,10 @@ def main():
     if url.startswith("https://") and "run.app" in url:
         cookies_content = extract_local_cookies()
         
+    target_youtube_url = "https://www.youtube.com/live/zG68yxff90s"
+    
     data = {
-        "youtube_url": "https://www.youtube.com/live/zG68yxff90s",
+        "youtube_url": target_youtube_url,
         "template_name": "restart_template.png",
         "threshold": 0.65,
         "scan_duration_limit": 660.0 # 限制掃描前 11 分鐘
