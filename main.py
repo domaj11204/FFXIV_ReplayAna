@@ -44,7 +44,7 @@ def get_youtube_video_info(youtube_url: str) -> dict:
     為加速處理，優先取得低解析度 (如 360p) 的影片唯視訊串流，以節省下載流量與解碼效能。
     """
     ydl_opts = {
-        'format': 'bestvideo[height<=360]/worstvideo/worst',
+        'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360]/worstvideo/worst',
         'quiet': True,
         'no_warnings': True,
     }
@@ -76,17 +76,35 @@ def get_youtube_video_info(youtube_url: str) -> dict:
         raise HTTPException(status_code=400, detail=f"無法解析 YouTube 影片資訊: {str(e)}")
 
 
-def run_black_detection(stream_url: str, min_duration: float = 3.0, pix_th: float = 0.10) -> list[dict]:
+def run_black_detection(
+    stream_url: str,
+    video_w: int,
+    video_h: int,
+    req: AnalyzeRequest,
+    min_duration: float = 3.0,
+    pix_th: float = 0.15
+) -> list[dict]:
     """
     使用 FFmpeg blackdetect 快速掃描整部影片，尋找持續時間 >= min_duration 秒的全黑片段。
+    為了防止實況主視訊鏡頭或覆蓋 UI (如聊天室、框架) 影響全黑判定，本步驟同樣會裁切至中央感興趣區域再進行偵測。
     """
+    crop_x = int(video_w * req.x_min)
+    crop_y = int(video_h * req.y_min)
+    crop_w = int(video_w * (req.x_max - req.x_min))
+    crop_h = int(video_h * (req.y_max - req.y_min))
+    
+    crop_x = (crop_x // 2) * 2
+    crop_y = (crop_y // 2) * 2
+    crop_w = (crop_w // 2) * 2
+    crop_h = (crop_h // 2) * 2
+
     cmd = [
         'ffmpeg',
         '-reconnect', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
         '-i', stream_url,
-        '-vf', f'blackdetect=d={min_duration}:pix_th={pix_th}',
+        '-vf', f'crop={crop_w}:{crop_h}:{crop_x}:{crop_y},fps=2,blackdetect=d={min_duration}:pix_th={pix_th}',
         '-an',
         '-f', 'null',
         '-'
@@ -244,7 +262,12 @@ async def analyze_video(request: AnalyzeRequest):
     
     # 3. 第一階段：快速全黑偵測 (FFmpeg blackdetect)
     print("開始執行全黑影格偵測...")
-    black_intervals = run_black_detection(stream_url)
+    black_intervals = run_black_detection(
+        stream_url=stream_url,
+        video_w=video_w,
+        video_h=video_h,
+        req=request
+    )
     print(f"共偵測到 {len(black_intervals)} 個潛在黑屏區間。")
     
     # 4. 第二階段：對每個黑屏後區間進行 RESTART 文字驗證
