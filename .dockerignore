@@ -5,6 +5,5 @@ __pycache__
 .python-version
 roi_center.png
 find_restart_template.py
-uv.lock
 .gitignore
-README.md
+
