@@ -683,7 +683,7 @@ def parse_ydl_info(info: dict) -> dict:
                 break
                 
     if not stream_url:
-        raise ValueError("找不到可用的視訊串流網址。")
+        raise ValueError("找不到可用的視訊串流網址。這可能是因為該影片為剛結束的直播，YouTube 正在進行後台轉檔處理（通常需要一些時間才能產生正常非 DASH 格式影片），請稍候再試。")
         
     return {
         "stream_url": stream_url,
@@ -700,21 +700,27 @@ def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) ->
     """
     # 階段二選項：不帶 Cookie，限制 ios/android 避開 bot 檢測，並加入住宅代理
     ydl_opts_no_cookie = {
-        'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360]/worstvideo/worst',
+        'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
         'quiet': True,
         'no_warnings': True,
         'extractor_args': {
             'youtube': {
-                'client': ['ios', 'android']
+                'client': ['ios', 'android'],
+                'construct_dash': False
             }
         }
     }
     
     # 階段一選項：帶 Cookie，使用預設客戶端以獲取最完整的影音格式支援，不帶代理 (直連)
     ydl_opts_with_cookie = {
-        'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360]/worstvideo/worst',
+        'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
         'quiet': True,
-        'no_warnings': True
+        'no_warnings': True,
+        'extractor_args': {
+            'youtube': {
+                'construct_dash': False
+            }
+        }
     }
     
     # 僅在階段二無 Cookie fallback 時進行直連解析，已移除代理
@@ -740,11 +746,17 @@ def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) ->
         print("階段二：不帶 Cookie 進行 Fallback 代理解析...")
         with YoutubeDL(ydl_opts_no_cookie) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
-            print("階段二代理解析成功！")
             res = parse_ydl_info(info)
             return res
     except Exception as e2:
-        raise HTTPException(status_code=400, detail=f"無法解析 YouTube 影片資訊: {str(e2)}")
+        err_msg = str(e2)
+        if "processing" in err_msg.lower() or "live stream" in err_msg.lower() or "post-live" in err_msg.lower():
+            friendly_msg = "無法解析 YouTube 影片資訊：該影片可能為剛結束的直播，YouTube 正在進行後台轉檔處理（通常需要一些時間才能產生正常影片檔），請稍候再試。"
+        elif "找不到可用的視訊串流網址" in err_msg:
+            friendly_msg = err_msg
+        else:
+            friendly_msg = f"無法解析 YouTube 影片資訊: {err_msg}"
+        raise HTTPException(status_code=400, detail=friendly_msg)
 
 
 def run_black_detection(
