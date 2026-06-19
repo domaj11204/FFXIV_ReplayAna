@@ -511,8 +511,8 @@ async def analyze(
                             
                     else:
                         error_embed = discord.Embed(
-                            title="❌ 雲端分析失敗",
-                            description=f"雲端 Cloud Run 服務回傳了錯誤代碼 `{response.status}`。",
+                            title="❌ 分析服務異常",
+                            description=f"後端分析伺服器回傳了錯誤代碼 `{response.status}`。",
                             color=discord.Color.red()
                         )
                         # 限制錯誤詳情在 900 個字元內，防止 Discord API 1024 長度報錯
@@ -524,8 +524,8 @@ async def analyze(
                     result = await response.json()
     except Exception as e:
         error_embed = discord.Embed(
-            title="❌ 連線雲端 API 失敗",
-            description=f"與雲端分析伺服器連線時發生未預期錯誤：\n`{str(e)}`",
+            title="❌ 連線後端服務失敗",
+            description=f"與後端分析伺服器連線時發生未預期錯誤：\n`{str(e)}`",
             color=discord.Color.red()
         )
         await interaction.followup.send(embed=error_embed)

@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.19"
+VERSION = "v0.0.20"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -679,9 +679,27 @@ def parse_ydl_info(info: dict) -> dict:
     live_status = info.get('live_status')
     if live_status == 'post_live':
         duration = info.get('duration', 0.0)
-        # 估算轉檔時間 (影片長度的 15% 左右，最少 10 分鐘，最多 120 分鐘)
-        est_min = max(10, min(120, int(duration * 0.15 / 60)))
-        raise ValueError(f"該影片為剛結束的直播（狀態：轉檔處理中）。YouTube 預計需要約 {est_min} 分鐘進行後台處理以產生正常影片格式，請稍候再試。")
+        # 估算轉檔總時間 (影片長度的 15% 左右，最少 10 分鐘，最多 120 分鐘)
+        total_est_min = max(10, min(120, int(duration * 0.15 / 60)))
+        
+        # 嘗試取得直播結束時間，並扣除已過去的時間以進行動態倒數
+        start_ts = info.get('release_timestamp') or info.get('timestamp')
+        if start_ts:
+            import time as py_time
+            end_ts = start_ts + duration
+            elapsed_sec = py_time.time() - end_ts
+            if elapsed_sec > 0:
+                remaining_min = int(total_est_min - (elapsed_sec / 60))
+                remaining_min = max(1, remaining_min)
+            else:
+                remaining_min = total_est_min
+        else:
+            remaining_min = total_est_min
+            
+        if remaining_min > 1:
+            raise ValueError(f"該影片為剛結束的直播（狀態：轉檔處理中）。YouTube 預計需要約 {remaining_min} 分鐘進行後台處理以產生正常影片格式，請稍候再試。")
+        else:
+            raise ValueError("該影片為剛結束的直播（狀態：後台轉檔處理已接近尾聲）。預計在 1~2 分鐘內即可完成，請稍候再次嘗試。")
 
     stream_url = info.get('url')
     if not stream_url and 'requested_formats' in info:
