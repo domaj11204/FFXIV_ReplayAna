@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.16"
+VERSION = "v0.0.17"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -675,6 +675,14 @@ def parse_ydl_info(info: dict) -> dict:
     """
     從 yt-dlp 回傳的 info 中提取直鏈與基本資訊。
     """
+    # 檢查是否為剛結束正在後台轉檔的直播
+    live_status = info.get('live_status')
+    if live_status == 'post_live':
+        duration = info.get('duration', 0.0)
+        # 估算轉檔時間 (影片長度的 15% 左右，最少 10 分鐘，最多 120 分鐘)
+        est_min = max(10, min(120, int(duration * 0.15 / 60)))
+        raise ValueError(f"該影片為剛結束的直播（狀態：轉檔處理中）。YouTube 預計需要約 {est_min} 分鐘進行後台處理以產生正常影片格式，請稍候再試。")
+
     stream_url = info.get('url')
     if not stream_url and 'requested_formats' in info:
         for f in info['requested_formats']:
@@ -785,6 +793,7 @@ def run_black_detection(
 
     cmd = [
         'ffmpeg',
+        '-loglevel', 'warning',
         '-reconnect', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
@@ -859,7 +868,12 @@ def run_black_detection(
                     
         process.wait()
         if process.returncode != 0:
-            last_logs = "".join(all_stderr_lines[-20:])
+            # 排除 FFmpeg 啟動宣告（banner）的行以防日誌內容被截斷
+            filtered_lines = [
+                l for l in all_stderr_lines 
+                if not any(k in l for k in ["ffmpeg version", "built with", "configuration:", "libavutil", "libavcodec", "libavformat", "libavdevice", "libavfilter", "libswscale", "libswresample", "libpostproc"])
+            ]
+            last_logs = "".join(filtered_lines[-15:])
             print(f"[run_black_detection] FFmpeg 異常退出 (code: {process.returncode})。最後日誌:\n{last_logs}")
             raise HTTPException(
                 status_code=500,
