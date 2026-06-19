@@ -300,6 +300,7 @@ async def analyze(
                             color=discord.Color.orange()
                         )
                         fallback_embed.add_field(name="影片網址", value=youtube_url, inline=False)
+                        fallback_embed.add_field(name="目前狀態", value="初始化中...", inline=False)
                         await status_msg.edit(embed=fallback_embed)
                         
                         output_filename = None
@@ -312,10 +313,11 @@ async def analyze(
                             output_filename = os.path.join(temp_dir, temp_filename)
                             
                             # 2. 本地使用最新 Cookie 下載影片 (最低解析度/體積最小)
-                            await fallback_embed.edit_field(
-                                index=0, 
+                            fallback_embed.set_field_at(
+                                1, 
                                 name="目前狀態", 
-                                value="正在本地提取影片串流中 (下載最低畫質 Worst Video 以節省頻寬)..."
+                                value="正在本地提取影片串流中 (下載最低畫質 Worst Video 以節省頻寬)...",
+                                inline=False
                             )
                             await status_msg.edit(embed=fallback_embed)
                             
@@ -339,10 +341,11 @@ async def analyze(
                                     await asyncio.sleep(10)
                                     elapsed += 10
                                     try:
-                                        await fallback_embed.edit_field(
-                                            index=0, 
+                                        fallback_embed.set_field_at(
+                                            1, 
                                             name="目前狀態", 
-                                            value=f"正在本地提取影片串流中 (已耗時 {elapsed} 秒)..."
+                                            value=f"正在本地提取影片串流中 (已耗時 {elapsed} 秒)...",
+                                            inline=False
                                         )
                                         await status_msg.edit(embed=fallback_embed)
                                     except Exception:
@@ -358,10 +361,11 @@ async def analyze(
                                 raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
                                 
                             # 3. 上傳影片至 GCS 儲存桶
-                            await fallback_embed.edit_field(
-                                index=0, 
+                            fallback_embed.set_field_at(
+                                1, 
                                 name="目前狀態", 
-                                value="📤 影片提取成功！正在將影片同步上傳至雲端 GCS 儲存桶..."
+                                value="📤 影片提取成功！正在將影片同步上傳至雲端 GCS 儲存桶...",
+                                inline=False
                             )
                             await status_msg.edit(embed=fallback_embed)
                             
@@ -381,10 +385,11 @@ async def analyze(
                             await asyncio.to_thread(upload_to_gcs)
                             
                             # 4. 以 GCS 影片路徑再次請求 Cloud Run 分析
-                            await fallback_embed.edit_field(
-                                index=0, 
+                            fallback_embed.set_field_at(
+                                1, 
                                 name="目前狀態", 
-                                value="🎬 影片同步完成！正在啟動雲端 FFXIV 滅團影像分析引擎..."
+                                value="🎬 影片同步完成！正在啟動雲端 FFXIV 滅團影像分析引擎...",
+                                inline=False
                             )
                             await status_msg.edit(embed=fallback_embed)
                             

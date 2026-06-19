@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.11"
+VERSION = "v0.0.12"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
