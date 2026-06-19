@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import io
 import time
@@ -316,7 +317,7 @@ async def analyze(
                             fallback_embed.set_field_at(
                                 1, 
                                 name="目前狀態", 
-                                value="正在本地提取影片串流中 (下載最低畫質 Worst Video 以節省頻寬)...",
+                                value="正在本地提取影片串流中...",
                                 inline=False
                             )
                             await status_msg.edit(embed=fallback_embed)
@@ -326,36 +327,88 @@ async def analyze(
                                 cmd.extend(["--cookies", "www.youtube.com_cookies.txt"])
                             elif os.path.exists("cookies.txt"):
                                 cmd.extend(["--cookies", "cookies.txt"])
-                                
+                            
+                            cmd.extend(["--newline", "--progress", "--no-colors"])
                             cmd.extend(["-f", "worstvideo/worst", "-o", output_filename, youtube_url])
                             
                             process = await asyncio.create_subprocess_exec(
                                 *cmd,
-                                stdout=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL
                             )
                             
-                            async def update_download_progress():
-                                elapsed = 0
-                                while process.returncode is None:
-                                    await asyncio.sleep(10)
-                                    elapsed += 10
-                                    try:
-                                        fallback_embed.set_field_at(
-                                            1, 
-                                            name="目前狀態", 
-                                            value=f"正在本地提取影片串流中 (已耗時 {elapsed} 秒)...",
-                                            inline=False
-                                        )
-                                        await status_msg.edit(embed=fallback_embed)
-                                    except Exception:
-                                        pass
+                            # 解析 yt-dlp 輸出的進度條 regex
+                            progress_re = re.compile(
+                                r"\[download\]\s+([0-9.]+)%\s+of\s+([~0-9.a-zA-Z]+)(?:\s+at\s+([~0-9.a-zA-Z/s]+))?\s+ETA\s+([0-9:]+)"
+                            )
+                            finished_re = re.compile(
+                                r"\[download\]\s+100%\s+of\s+([~0-9.a-zA-Z]+)\s+in\s+([0-9:]+)"
+                            )
+
+                            def make_progress_bar(percent: float, width: int = 10) -> str:
+                                filled_len = int(round(width * percent / 100))
+                                bar = "■" * filled_len + "□" * (width - filled_len)
+                                return f"[{bar}] {percent:.1f}%"
+
+                            async def read_progress():
+                                last_update_time = 0.0
+                                last_text = ""
+                                while True:
+                                    line = await process.stdout.readline()
+                                    if not line:
+                                        break
+                                    line_str = line.decode('utf-8', errors='ignore').strip()
+                                    
+                                    match = progress_re.search(line_str)
+                                    if match:
+                                        percent_str, size_str, speed_str, eta_str = match.groups()
+                                        percent = float(percent_str)
+                                        bar_str = make_progress_bar(percent)
+                                        speed_info = f" | 速度: {speed_str}" if speed_str else ""
                                         
-                            download_task = asyncio.create_task(update_download_progress())
+                                        text = f"正在本地提取影片串流中...\n{bar_str}\n大小: {size_str}{speed_info} | 剩餘時間: {eta_str}"
+                                        
+                                        now = time.time()
+                                        if text != last_text and (now - last_update_time >= 3.0 or percent >= 99.9):
+                                            try:
+                                                fallback_embed.set_field_at(
+                                                    1, 
+                                                    name="目前狀態", 
+                                                    value=text,
+                                                    inline=False
+                                                )
+                                                await status_msg.edit(embed=fallback_embed)
+                                                last_update_time = now
+                                                last_text = text
+                                            except Exception:
+                                                pass
+                                        continue
+
+                                    match_fin = finished_re.search(line_str)
+                                    if match_fin:
+                                        size_str, duration_str = match_fin.groups()
+                                        bar_str = make_progress_bar(100.0)
+                                        text = f"本地提取影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
+                                        try:
+                                            fallback_embed.set_field_at(
+                                                1, 
+                                                name="目前狀態", 
+                                                value=text,
+                                                inline=False
+                                            )
+                                            await status_msg.edit(embed=fallback_embed)
+                                        except Exception:
+                                            pass
+                                        break
+
+                            progress_task = asyncio.create_task(read_progress())
                             try:
                                 await process.wait()
+                                await asyncio.wait_for(progress_task, timeout=2.0)
+                            except Exception:
+                                pass
                             finally:
-                                download_task.cancel()
+                                progress_task.cancel()
                             
                             if not os.path.exists(output_filename) or os.path.getsize(output_filename) == 0:
                                 raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
