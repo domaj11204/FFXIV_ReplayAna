@@ -771,54 +771,67 @@ def run_black_detection(
     env = os.environ.copy()
     if "http_proxy" in env: del env["http_proxy"]
     if "https_proxy" in env: del env["https_proxy"]
-    print("[run_black_detection] FFmpeg 將使用直連下載影片...")
+    import threading
     process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore', env=env)
     
-    black_intervals = []
-    # 匹配範例：[blackdetect @ 0x...] black_start:10.5 black_end:15.5 black_duration:5.0
-    pattern = re.compile(r'black_start:([\d\.]+)\s+black_end:([\d\.]+)\s+black_duration:([\d\.]+)')
+    # 啟動 180 秒超時定時器，防止第一階段 FFmpeg 執行超時卡死
+    def force_kill_black():
+        try:
+            print("[run_black_detection] 偵測到第一階段 FFmpeg 執行超時，強行中止...")
+            process.terminate()
+        except Exception:
+            pass
+    timer = threading.Timer(180.0, force_kill_black)
+    timer.start()
     
-    all_stderr_lines = []
-    reconnect_fail_count = 0
-    while True:
-        line = process.stderr.readline()
-        if not line:
-            break
-        all_stderr_lines.append(line)
+    try:
+        black_intervals = []
+        # 匹配範例：[blackdetect @ 0x...] black_start:10.5 black_end:15.5 black_duration:5.0
+        pattern = re.compile(r'black_start:([\d\.]+)\s+black_end:([\d\.]+)\s+black_duration:([\d\.]+)')
         
-        # 偵測是否被 YouTube 阻擋或重連失敗，主動終止防卡死
-        if "http error 403" in line.lower() or "403 forbidden" in line.lower() or "reconnect failed" in line.lower():
-            reconnect_fail_count += 1
-            if reconnect_fail_count >= 5:
-                process.terminate()
-                process.wait()
-                raise HTTPException(
-                    status_code=403,
-                    detail="與 YouTube 影片伺服器的連線遭拒絕 (HTTP 403 Forbidden)。\n請在 mini-pc 本地提供有效的 cookies.txt 以避開限制。"
-                )
-        match = pattern.search(line)
-        if match:
-            start = float(match.group(1))
-            end = float(match.group(2))
-            duration = float(match.group(3))
+        all_stderr_lines = []
+        reconnect_fail_count = 0
+        while True:
+            line = process.stderr.readline()
+            if not line:
+                break
+            all_stderr_lines.append(line)
             
-            # FFXIV 的滅團黑屏一般落在 4~10 秒之間，因此過濾過長或過短的黑屏以防誤判
-            if 3.0 <= duration <= 12.0:
-                black_intervals.append({
-                    'start': start,
-                    'end': end,
-                    'duration': duration
-                })
+            # 偵測是否被 YouTube 阻擋或重連失敗，主動終止防卡死
+            if "http error 403" in line.lower() or "403 forbidden" in line.lower() or "reconnect failed" in line.lower():
+                reconnect_fail_count += 1
+                if reconnect_fail_count >= 5:
+                    process.terminate()
+                    process.wait()
+                    raise HTTPException(
+                        status_code=403,
+                        detail="與 YouTube 影片伺服器的連線遭拒絕 (HTTP 403 Forbidden)。\n請在 mini-pc 本地提供有效的 cookies.txt 以避開限制。"
+                    )
+            match = pattern.search(line)
+            if match:
+                start = float(match.group(1))
+                end = float(match.group(2))
+                duration = float(match.group(3))
                 
-    process.wait()
-    if process.returncode != 0:
-        last_logs = "".join(all_stderr_lines[-20:])
-        print(f"[run_black_detection] FFmpeg 異常退出 (code: {process.returncode})。最後日誌:\n{last_logs}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"第一階段 FFmpeg 黑屏偵測失敗 (Exit Code: {process.returncode})，請確認代理或直鏈是否可用。最後日誌:\n{last_logs}"
-        )
-    return black_intervals
+                # FFXIV 的滅團黑屏一般落在 4~10 秒之間，因此過濾過長或過短的黑屏以防誤判
+                if 3.0 <= duration <= 12.0:
+                    black_intervals.append({
+                        'start': start,
+                        'end': end,
+                        'duration': duration
+                    })
+                    
+        process.wait()
+        if process.returncode != 0:
+            last_logs = "".join(all_stderr_lines[-20:])
+            print(f"[run_black_detection] FFmpeg 異常退出 (code: {process.returncode})。最後日誌:\n{last_logs}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"第一階段 FFmpeg 黑屏偵測失敗 (Exit Code: {process.returncode})，請確認代理或直鏈是否可用。最後日誌:\n{last_logs}"
+            )
+        return black_intervals
+    finally:
+        timer.cancel()
 
 def verify_restart_text(
     stream_url: str,
@@ -855,6 +868,7 @@ def verify_restart_text(
     # 使用 FFmpeg 只讀取特定時間段 [start_time, start_time + 30]，每秒 1 幀，並自動裁切
     ffmpeg_cmd = [
         'ffmpeg',
+        '-loglevel', 'error', # 減少 stderr 的輸出量，防微杜漸
         '-ss', str(start_time),
         '-reconnect', '1',
         '-reconnect_streamed', '1',
@@ -873,74 +887,78 @@ def verify_restart_text(
     env = os.environ.copy()
     if "http_proxy" in env: del env["http_proxy"]
     if "https_proxy" in env: del env["https_proxy"]
-    print("[verify_restart_text] FFmpeg 將使用直連進行比對畫面下載...")
-    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=frame_size * 5, env=env)
+    import threading
+    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=frame_size * 5, env=env)
+    
+    # 啟動 15 秒超時定時器，防止網路連線卡住導致 stdout.read 阻塞
+    def force_kill():
+        try:
+            print(f"[verify_restart_text] 偵測到影片段落 {start_time}s 的畫面下載超時，強行中止連線...", flush=True)
+            process.terminate()
+        except Exception:
+            pass
+    timer = threading.Timer(15.0, force_kill)
+    timer.start()
     
     match_found = False
     best_score = 0.0
     detected_at = -1.0
     
-    frame_idx = 0
-    while True:
-        raw_frame = process.stdout.read(frame_size)
-        if len(raw_frame) != frame_size:
-            break
-        
-        frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((crop_h, crop_w, 3))
-        
-        # HSV 金色過濾
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower_gold = np.array([15, 80, 150])
-        upper_gold = np.array([28, 255, 255])
-        mask_frame = cv2.inRange(hsv, lower_gold, upper_gold)
-        gold_pixels = cv2.countNonZero(mask_frame)
-        
-        # 動態計算金色像素門檻 (大於 crop 區域面積 of 1.3%)
-        pixel_threshold = int(crop_w * crop_h * 0.013)
-        
-        if gold_pixels >= pixel_threshold:
-            # 進行多尺度遮罩模板匹配
-            for scale in scales:
-                sw = int(target_w * scale)
-                sh = int(target_h * scale)
-                
-                # 防止超出邊界
-                if sw > crop_w or sh > crop_h:
-                    continue
-                    
-                scaled_tpl = cv2.resize(resized_template, (sw, sh))
-                mask_tpl = cv2.inRange(cv2.cvtColor(scaled_tpl, cv2.COLOR_BGR2HSV), lower_gold, upper_gold)
-                
-                res = cv2.matchTemplate(mask_frame, mask_tpl, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(res)
-                
-                if max_val > best_score:
-                    best_score = max_val
-                    
-                # 遮罩匹配分數以 0.45 作為可靠匹配閥值
-                actual_threshold = 0.45 if req.threshold == 0.65 else req.threshold
-                if max_val >= actual_threshold:
-                    match_found = True
-                    detected_at = start_time + frame_idx
-                    break
-                    
-        if match_found:
-            break
-            
-        frame_idx += 1
-        
-    process.terminate()
-    
-    # 讀取剩餘的 stderr 輸出，以便出錯時進行診斷
-    stderr_out = ""
     try:
-        stderr_out = process.stderr.read().decode('utf-8', errors='ignore')
-    except Exception:
-        pass
-    process.wait()
-    
-    if not match_found and len(stderr_out) > 0:
-        print(f"[verify_restart_text] FFmpeg 診斷日誌 (最後500字元):\n{stderr_out[-500:]}")
+        frame_idx = 0
+        while True:
+            raw_frame = process.stdout.read(frame_size)
+            if len(raw_frame) != frame_size:
+                break
+            
+            frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((crop_h, crop_w, 3))
+            
+            # HSV 金色過濾
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            lower_gold = np.array([15, 80, 150])
+            upper_gold = np.array([28, 255, 255])
+            mask_frame = cv2.inRange(hsv, lower_gold, upper_gold)
+            gold_pixels = cv2.countNonZero(mask_frame)
+            
+            # 動態計算金色像素門檻 (大於 crop 區域面積 of 1.3%)
+            pixel_threshold = int(crop_w * crop_h * 0.013)
+            
+            if gold_pixels >= pixel_threshold:
+                # 進行多尺度遮罩模板匹配
+                for scale in scales:
+                    sw = int(target_w * scale)
+                    sh = int(target_h * scale)
+                    
+                    # 防止超出邊界
+                    if sw > crop_w or sh > crop_h:
+                        continue
+                        
+                    scaled_tpl = cv2.resize(resized_template, (sw, sh))
+                    mask_tpl = cv2.inRange(cv2.cvtColor(scaled_tpl, cv2.COLOR_BGR2HSV), lower_gold, upper_gold)
+                    
+                    res = cv2.matchTemplate(mask_frame, mask_tpl, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, _ = cv2.minMaxLoc(res)
+                    
+                    if max_val > best_score:
+                        best_score = max_val
+                        
+                    # 遮罩匹配分數以 0.45 作為可靠匹配閥值
+                    actual_threshold = 0.45 if req.threshold == 0.65 else req.threshold
+                    if max_val >= actual_threshold:
+                        match_found = True
+                        detected_at = start_time + frame_idx
+                        break
+                        
+            if match_found:
+                break
+            frame_idx += 1
+    finally:
+        timer.cancel()
+        try:
+            process.terminate()
+        except Exception:
+            pass
+        process.wait()
         
     return match_found, detected_at, best_score
 
