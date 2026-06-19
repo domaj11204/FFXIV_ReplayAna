@@ -42,15 +42,21 @@ jobs:
             echo "正在拉取最新 Docker 鏡像: ghcr.io/${REPO_LOWER}:latest"
             docker pull ghcr.io/${REPO_LOWER}:latest
             
-            # 2. 停止並刪除舊有的 Web 服務容器 (如果存在)
+            # 2. 停止並刪除舊有的服務容器 (如果存在)
             if [ "$(docker ps -aq -f name=ffxiv-analyzer-web)" ]; then
-              echo "偵測到既有容器，正在停止並移除..."
+              echo "偵測到舊 Web 容器，正在停止並移除..."
               docker stop ffxiv-analyzer-web
               docker rm ffxiv-analyzer-web
             fi
             
-            # 3. 使用本地的環境變數檔啟動新容器
-            echo "啟動新容器..."
+            if [ "$(docker ps -aq -f name=ffxiv-discord-bot)" ]; then
+              echo "偵測到舊 Bot 容器，正在停止並移除..."
+              docker stop ffxiv-discord-bot
+              docker rm ffxiv-discord-bot
+            fi
+            
+            # 3. 啟動 Web UI & API 服務容器
+            echo "啟動 Web UI & API 服務容器..."
             docker run -d \
               --name ffxiv-analyzer-web \
               --restart unless-stopped \
@@ -58,7 +64,17 @@ jobs:
               --env-file .env \
               ghcr.io/${REPO_LOWER}:latest
               
-            # 4. 清理過期的虛擬映像檔以節省磁碟空間
+            # 4. 啟動 Discord Bot 服務容器 (覆蓋 Entrypoint 執行 discord_bot.py)
+            echo "啟動 Discord Bot 服務容器..."
+            docker run -d \
+              --name ffxiv-discord-bot \
+              --restart unless-stopped \
+              --network host \
+              --env-file .env \
+              ghcr.io/${REPO_LOWER}:latest \
+              python discord_bot.py
+              
+            # 5. 清理過期的虛擬映像檔以節省磁碟空間
             docker image prune -f
             
             echo "✅ Mini-PC 地端服務已成功更新並重啟！"

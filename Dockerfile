@@ -28,8 +28,8 @@ COPY pyproject.toml uv.lock README.md /app/
 # 在系統環境中同步安裝依賴套件（Cloud Run 不需要虛擬環境，直接安裝於系統可簡化指令與容器大小）
 RUN uv sync --no-dev --no-install-project
 
-# 拷貝核心程式碼與預設的 RESTART 模板圖片
-COPY main.py restart_template.png /app/
+# 拷貝核心程式碼、Discord Bot 與預設的 RESTART 模板圖片
+COPY main.py discord_bot.py restart_template.png /app/
 
 # 暴露埠號 (Cloud Run 會自動映射 PORT 環境變數，預設為 8080)
 EXPOSE 8080

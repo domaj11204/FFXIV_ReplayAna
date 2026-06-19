@@ -1,14 +1,6 @@
 name: Deploy Discord Bot to VM
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'discord_bot.py'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/deploy-discord-bot.yml'
   workflow_dispatch:
 
 jobs:
