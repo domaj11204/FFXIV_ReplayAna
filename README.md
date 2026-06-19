@@ -258,3 +258,22 @@ docker run -d -p 8080:8080 \
 - **排除 DASH 格式**：針對剛結束直播的影片格式提取加入 `[protocol!*=dash]` 與 `construct_dash=False`，防止 `yt-dlp` 提取出 FFmpeg 無法解析的 DASH manifest 格式。
 - **本地 Fallback 擴展**：將「黑屏偵測失敗」與 「Exit Code 錯誤」納入 Fallback 機制，當雲端 IP 被 YouTube 封鎖時自動切換至地端寬頻下載。
 
+### v0.0.12 ~ v0.0.13
+- **即時下載進度條**：在本地 GCS Fallback 下載期間，從 `yt-dlp` 的 stdout 管道中即時捕獲進度，於 Discord Embed 中動態渲染文字進度條（如 `[■■■■□□□□□□] 40.5%`）並顯示下載速度、大小與剩餘時間。
+- **更新節流控制**：實作每 3 秒更新一次 Discord 狀態的節流限制（Rate Limit），防止頻繁 API 請求觸發 429 封鎖，並在下載完畢時強制更新至 100%。
+- **修復 edit_field Bug**：修正 Embed 呼叫不存在的 `edit_field` 的錯誤，改用符合規範的 `set_field_at` 方法。
+
+### v0.0.11
+- **Wipe 風格美化與拔除 Emoji**：移除 Discord Bot 所有交互介面中的 Emoji 裝飾，並將所有「滅團」字眼全面調整為符合主流副本習慣的「Wipe」風格字詞（如「Wipe數:」、「Wipe #」等）。
+- **實時耗時提示**：在 API 請求發送等待以及下載期間，定時在 Embed description 更新「已耗時 N 秒」的實時進度，讓使用者掌握後端分析進度。
+- **Cookie 掛載修正**：在地端部署工作流中，同步為 `ffxiv-discord-bot` 容器掛載本地 `cookies.txt`，徹底解決 Bot 無法獲得影片標題與時長的 YouTube 解析封鎖 Bug。
+
+### v0.0.10
+- **預估耗時提示**：透過 `yt-dlp` 於開始分析時快速抓取影片 metadata，動態計算「影片時長 * 4.5% + 10秒」作為預估耗時，並預先更新在 Embed 狀態中。
+- **安全錯誤截斷**：將 API 出錯回報詳情字元安全截斷在 900 字元以內，徹底解決因報錯過長超出 Discord Embed 1024 字元限制導致的 `400 Bad Request` 崩潰問題。
+
+### v0.0.9
+- **FFmpeg 卡死與洩漏修復**：引入 `try...finally` 結構確保 `threading.Timer` 超時保護必定被 `cancel()` 關閉。
+- **預防標準錯誤阻塞**：將 FFmpeg 執行比對時的 `stderr` 重新導向至 `DEVNULL`，避免 stderr 管道被 64KB 緩衝區寫滿導致進程無限卡死。
+- **版本與時間日誌前綴**：重寫 Python 全域 `print` 函數，自動附加 `[VERSION]` 及時間戳前綴並強制 flush。
+- **強行釋放進程**：將異常超時的進程關閉手段由 `terminate()` 升級為 `kill()` (SIGKILL)，保證徹底清理 FFmpeg 殘留。
