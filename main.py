@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.15"
+VERSION = "v0.0.16"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -682,6 +682,9 @@ def parse_ydl_info(info: dict) -> dict:
                 stream_url = f['url']
                 break
                 
+    if stream_url and ("manifest/dash" in stream_url or "manifest/dash" in info.get('url', '') or stream_url.endswith(".mpd")):
+        stream_url = None
+
     if not stream_url:
         raise ValueError("找不到可用的視訊串流網址。這可能是因為該影片為剛結束的直播，YouTube 正在進行後台轉檔處理（通常需要一些時間才能產生正常非 DASH 格式影片），請稍候再試。")
         
