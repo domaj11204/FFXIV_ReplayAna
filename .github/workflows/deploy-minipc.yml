@@ -1,14 +1,16 @@
 name: Deploy Web UI & API to Home Mini-PC via Tailscale Proxy
 
 on:
-  push:
-    tags:
-      - 'v*' # 當推送版本 Tag (如 v1.0.0) 時觸發
+  workflow_run:
+    workflows: ["Publish Docker Image to GHCR"]
+    types:
+      - completed
   workflow_dispatch: # 允許手動觸發
 
 jobs:
   deploy-to-minipc:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
