@@ -194,18 +194,20 @@ async def analyze(
         
     status_msg = await interaction.followup.send(embed=embed)
 
-    # 1. 取得 GCP ID Token
-    try:
-        audience = CLOUD_RUN_URL.split("/analyze")[0]
-        token = get_oidc_token(audience)
-    except Exception as e:
-        error_embed = discord.Embed(
-            title="❌ GCP 身分驗證錯誤",
-            description=f"無法取得 GCP 認證 Token。\n請確認伺服器之認證環境或金鑰設定。\n\n**詳細原因：**\n`{str(e)}`",
-            color=discord.Color.red()
-        )
-        await interaction.followup.send(embed=error_embed)
-        return
+    # 1. 取得 GCP ID Token (僅在指向 Cloud Run *.run.app 時需要)
+    token = None
+    if "run.app" in CLOUD_RUN_URL:
+        try:
+            audience = CLOUD_RUN_URL.split("/analyze")[0]
+            token = get_oidc_token(audience)
+        except Exception as e:
+            error_embed = discord.Embed(
+                title="❌ GCP 身分驗證錯誤",
+                description=f"無法取得 GCP 認證 Token。\n請確認伺服器之認證環境或金鑰設定。\n\n**詳細原因：**\n`{str(e)}`",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=error_embed)
+            return
 
     # 2. 準備 API 請求
     payload = {
@@ -220,9 +222,10 @@ async def analyze(
     }
     
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}"
+        "Content-Type": "application/json"
     }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     # 3. 發送 API 請求至 Cloud Run
     try:
