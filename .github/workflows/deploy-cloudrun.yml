@@ -1,15 +1,6 @@
 name: Deploy to GCP Cloud Run
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'main.py'
-      - 'Dockerfile'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/deploy-cloudrun.yml'
   workflow_dispatch:
 
 env:
