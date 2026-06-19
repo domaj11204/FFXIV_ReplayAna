@@ -182,7 +182,7 @@ async def analyze(
     # 建立初步處理狀態的 Embed
     embed = discord.Embed(
         title="🎬 FFXIV 滅團分析任務已啟動",
-        description="正在連接至雲端分析引擎，請耐心等待...",
+        description="正在讀取影片資訊與預估處理時間...",
         color=discord.Color.blue()
     )
     embed.add_field(name="影片網址", value=youtube_url, inline=False)
@@ -193,6 +193,44 @@ async def analyze(
         embed.add_field(name="掃描長度限制", value=f"僅掃描前 {scan_duration_limit} 秒", inline=False)
         
     status_msg = await interaction.followup.send(embed=embed)
+    
+    # 異步快速獲取影片資訊，算出預估下載與分析時間
+    video_title = "YouTube 影片"
+    video_duration = 0.0
+    est_time_str = "無法預估（通常需要 1~3 分鐘）"
+    try:
+        def get_info():
+            ydl_opts = {
+                'quiet': True,
+                'skip_download': True,
+                'extract_flat': True,
+            }
+            if os.path.exists("www.youtube.com_cookies.txt"):
+                ydl_opts["cookies"] = "www.youtube.com_cookies.txt"
+            elif os.path.exists("cookies.txt"):
+                ydl_opts["cookies"] = "cookies.txt"
+            with YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(youtube_url, download=False)
+        
+        info = await asyncio.to_thread(get_info)
+        video_title = info.get("title", video_title)
+        video_duration = float(info.get("duration", 0.0))
+        
+        # 計算需要分析的實際長度
+        scan_len = video_duration
+        if scan_duration_limit > 0.0:
+            scan_len = min(video_duration, scan_duration_limit)
+            
+        # 預估分析耗時公式 (4.5% 的影片時長 + 10 秒基礎耗時)
+        est_seconds = int(scan_len * 0.045) + 10
+        est_time_str = f"約 {format_time(est_seconds)} (依網路狀況可能有所變動)"
+    except Exception as e:
+        print(f"快速解析影片資訊失敗：{e}")
+        
+    # 更新 Embed 以顯示預估耗時與標題
+    embed.description = f"正在分析影片：**{video_title}**\n正在尋找 WIPE 滅團時間點，這可能需要幾分鐘的時間，請稍候..."
+    embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
+    await status_msg.edit(embed=embed)
 
     # 1. 取得 GCP ID Token (僅在指向 Cloud Run *.run.app 時需要)
     token = None
@@ -384,7 +422,9 @@ async def analyze(
                             description=f"雲端 Cloud Run 服務回傳了錯誤代碼 `{response.status}`。",
                             color=discord.Color.red()
                         )
-                        error_embed.add_field(name="錯誤詳情", value=f"```\n{err_detail}\n```", inline=False)
+                        # 限制錯誤詳情在 900 個字元內，防止 Discord API 1024 長度報錯
+                        truncated_detail = err_detail if len(err_detail) < 900 else err_detail[:900] + "\n...(其餘日誌內容已省略)..."
+                        error_embed.add_field(name="錯誤詳情", value=f"```\n{truncated_detail}\n```", inline=False)
                         await status_msg.edit(embed=error_embed)
                         return
                 else:
