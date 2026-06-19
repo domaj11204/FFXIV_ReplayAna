@@ -231,3 +231,30 @@ docker run -d -p 8080:8080 \
    ```
 3. 獲得類似 `https://xxxx.ngrok-free.app` 的隨機外網 URL，寫入 Discord Bot 設定檔即可使用。
 
+---
+
+## 📝 更新日誌 (Change Log)
+
+### v0.0.21
+- **動態超時控制**：依據影片長度動態調整第一階段 FFmpeg 黑屏偵測的超時時間（每 1 小時影片額外給予 120 秒，基礎 180 秒），徹底解決 3 小時以上長影片在分析時被誤殺 (code: -9) 的問題。
+- **解析階段優化**：在 `get_youtube_video_info` 階段一因影片本身狀態（如轉檔中）拋出錯誤時，直接中斷並不進行無謂的階段二代理解析 Fallback。
+- **Webhook 分支修復**：修正 GitHub Actions 的 Discord Webhook 在 Tag 部署時無法取得真實分支名稱的問題（透過 `git branch` 反查真實的分支如 `main`）。
+
+### v0.0.20
+- **服務通用化**：將 Discord Bot 顯示的「雲端分析失敗」、「Cloud Run 服務」等字眼通用化為「分析服務異常」、「後端分析伺服器」，完美兼容本地 Docker 容器運行環境。
+- **動態剩餘時間倒數**：在後端實作了基於 `release_timestamp`（或 `timestamp`）加上影片時長計算直播結束時間的演算法，扣除當前系統時間以實現「轉檔剩餘時間動態遞減」倒數，並在小於 1 分鐘時自動提示「後台轉檔已接近尾聲」。
+
+### v0.0.19
+- **Bot 依賴修復**：在 `discord_bot.py` 中導入 `YoutubeDL`，修復快速解析影片資訊失效且日誌報錯 `name 'YoutubeDL' is not defined` 的問題。
+- **Fallback 流程避空**：優化本地 GCS Fallback 機制觸發條件，主動排除「轉檔中/直播中」等影片本身狀態的錯誤，避免 Bot 在本地下載無法轉檔的影片而導致進度永久卡死在「分析中」。
+
+### v0.0.17 ~ v0.0.18
+- **直播轉檔檢測**：引入了 `live_status == 'post_live'` 的狀態偵測，當遇到剛結束直播且處於轉檔中的影片時，主動拋出 400 警告並估算轉換所需時間。
+- **雙重日誌精簡防呆**：
+  - 在 FFmpeg 指令中加入 `-loglevel warning`。
+  - 在 Python 拋出異常前，以 `filtered_lines` 剔除所有與 FFmpeg 編譯配置相關的長 Banner 行，確保 Discord 訊息因長度被截斷時，仍能保留最末尾的 15 行真實報錯。
+
+### v0.0.14 ~ v0.0.16
+- **排除 DASH 格式**：針對剛結束直播的影片格式提取加入 `[protocol!*=dash]` 與 `construct_dash=False`，防止 `yt-dlp` 提取出 FFmpeg 無法解析的 DASH manifest 格式。
+- **本地 Fallback 擴展**：將「黑屏偵測失敗」與 「Exit Code 錯誤」納入 Fallback 機制，當雲端 IP 被 YouTube 封鎖時自動切換至地端寬頻下載。
+

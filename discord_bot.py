@@ -184,7 +184,7 @@ async def analyze(
     # 建立初步處理狀態的 Embed
     embed = discord.Embed(
         title="FFXIV WIPE分析中",
-        description="正在讀取影片資訊與預估處理時間...\n*提示：設定僅影響準確度，不太影響計算速度*",
+        description="正在讀取影片資訊與預估處理時間...\n*此設定僅影響準確度，不影響分析時長*",
         color=discord.Color.blue()
     )
     embed.add_field(name="影片網址", value=youtube_url, inline=False)
@@ -230,7 +230,7 @@ async def analyze(
         print(f"快速解析影片資訊失敗：{e}")
         
     # 更新 Embed 以顯示預估耗時與標題
-    embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點，這可能需要幾分鐘的時間，請稍候...\n*提示：設定僅影響準確度，不太影響計算速度*"
+    embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點，這可能需要幾分鐘的時間，請稍候...\n*此設定僅影響準確度，不影響分析時長*"
     embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
     await status_msg.edit(embed=embed)
 
@@ -275,7 +275,7 @@ async def analyze(
             await asyncio.sleep(10)
             elapsed += 10
             try:
-                embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點 (已分析 {elapsed} 秒)，請稍候...\n*提示：設定僅影響準確度，不太影響計算速度*"
+                embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點 (已分析 {elapsed} 秒)，請稍候...\n*此設定僅影響準確度，不影響分析時長*"
                 await status_msg.edit(embed=embed)
             except Exception:
                 pass

@@ -102,7 +102,8 @@ jobs:
           
           # 從 main.py 提取版本號
           VERSION_VAL=$(python3 -c 'import re; print(re.search(r"VERSION\s*=\s*\"([^\"]+)\"", open("main.py").read()).group(1))' || echo "未知")
-          BRANCH_VAL="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+          GIT_BRANCH=$(git branch -r --contains HEAD | grep -v 'HEAD' | head -n 1 | sed 's/.*origin\///' | xargs)
+          BRANCH_VAL="${GIT_BRANCH:-${{ github.event.workflow_run.head_branch || github.ref_name }}}"
           
           COLOR=3066993 # 藍色 (預設)
           if [ "$STATUS" = "success" ]; then

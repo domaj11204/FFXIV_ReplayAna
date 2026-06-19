@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.20"
+VERSION = "v0.0.21"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -769,6 +769,9 @@ def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) ->
                 res = parse_ydl_info(info)
                 return res
         except Exception as e:
+            err_msg = str(e)
+            if "轉檔" in err_msg or "找不到可用的" in err_msg:
+                raise e
             print(f"階段一帶 Cookie 解析失敗: {e}。嘗試階段二 Fallback...")
     # 階段二：無 Cookie 解析 (使用 Proxy Fallback)
     try:
@@ -793,6 +796,7 @@ def run_black_detection(
     video_w: int,
     video_h: int,
     req: AnalyzeRequest,
+    duration: float = 0.0,
     min_duration: float = 3.0,
     pix_th: float = 0.15
 ) -> list[dict]:
@@ -834,14 +838,22 @@ def run_black_detection(
     import threading
     process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore', env=env)
     
-    # 啟動 180 秒超時定時器，防止第一階段 FFmpeg 執行超時卡死
+    # 估算超時秒數：基礎 180 秒，每 1 小時 (3600 秒) 影片額外給予 120 秒
+    timeout_sec = 180.0
+    actual_len = duration
+    if req.scan_duration_limit > 0.0:
+        actual_len = min(duration, req.scan_duration_limit)
+    if actual_len > 0.0:
+        timeout_sec = max(180.0, 180.0 + (actual_len / 3600.0) * 120.0)
+
+    # 啟動超時定時器，防止第一階段 FFmpeg 執行超時卡死
     def force_kill_black():
         try:
-            print("[run_black_detection] 【超時警告】偵測到第一階段 FFmpeg 執行超時，強行 kill 進程...")
+            print(f"[run_black_detection] 【超時警告】偵測到第一階段 FFmpeg 執行超時 ({timeout_sec:.1f} 秒)，強行 kill 進程...")
             process.kill()
         except Exception:
             pass
-    timer = threading.Timer(180.0, force_kill_black)
+    timer = threading.Timer(timeout_sec, force_kill_black)
     timer.start()
     
     try:
@@ -1170,7 +1182,8 @@ async def analyze_video(request: AnalyzeRequest):
         stream_url=stream_url,
         video_w=video_w,
         video_h=video_h,
-        req=request
+        req=request,
+        duration=duration
     )
     print(f"共偵測到 {len(black_intervals)} 個潛在黑屏區間。")
     
