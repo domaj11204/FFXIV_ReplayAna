@@ -57,13 +57,21 @@ jobs:
               docker rm ffxiv-discord-bot
             fi
             
-            # 3. 啟動 Web UI & API 服務容器
+            # 3. 偵測本地是否有 cookies.txt，若有則加入掛載參數
+            COOKIE_MOUNT=""
+            if [ -f cookies.txt ]; then
+              echo "偵測到本地 cookies.txt，將掛載至容器內！"
+              COOKIE_MOUNT="-v $(pwd)/cookies.txt:/app/cookies.txt"
+            fi
+
+            # 4. 啟動 Web UI & API 服務容器
             echo "啟動 Web UI & API 服務容器..."
             docker run -d \
               --name ffxiv-analyzer-web \
               --restart unless-stopped \
               --network host \
               --env-file .env \
+              $COOKIE_MOUNT \
               ghcr.io/${REPO_LOWER}:latest
               
             # 4. 啟動 Discord Bot 服務容器 (覆蓋 Entrypoint 執行 discord_bot.py)
