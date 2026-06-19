@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import google.auth.transport.requests
 from google.oauth2 import service_account
 from google.cloud import storage
+from yt_dlp import YoutubeDL
 
 # 載入 .env 檔案
 load_dotenv()
@@ -294,7 +295,8 @@ async def analyze(
                         err_detail = err_body
                         
                     # 偵測是否被 YouTube Bot 檢測阻擋，若是則啟動 GCS 儲存桶橋接 Fallback 機制
-                    if "Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail:
+                    # 排除影片本身正在轉檔的情況 (避免轉檔時本地也下載失敗且卡死)
+                    if "轉檔" not in err_detail and ("Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail or "黑屏偵測失敗" in err_detail or "Exit Code" in err_detail):
                         fallback_embed = discord.Embed(
                             title="啟動 GCS 儲存桶橋接機制...",
                             description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
