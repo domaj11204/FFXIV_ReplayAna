@@ -12,6 +12,24 @@ from google.cloud import storage
 
 # Proxy settings removed
 
+import datetime
+import builtins
+
+VERSION = "v0.0.9"
+
+def print(*args, **kwargs):
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    prefix = f"[{now}] [{VERSION}]"
+    if args:
+        new_args = (f"{prefix} {args[0]}",) + args[1:]
+    else:
+        new_args = (prefix,)
+    
+    if "flush" not in kwargs:
+        kwargs["flush"] = True
+        
+    builtins.print(*new_args, **kwargs)
+
 def download_from_gcs(bucket_name: str, blob_name: str, dest_path: str) -> bool:
     """
     從指定的 GCS Bucket 中下載指定的 blob 檔案至本地 dest_path。
@@ -777,8 +795,8 @@ def run_black_detection(
     # 啟動 180 秒超時定時器，防止第一階段 FFmpeg 執行超時卡死
     def force_kill_black():
         try:
-            print("[run_black_detection] 偵測到第一階段 FFmpeg 執行超時，強行中止...")
-            process.terminate()
+            print("[run_black_detection] 【超時警告】偵測到第一階段 FFmpeg 執行超時，強行 kill 進程...")
+            process.kill()
         except Exception:
             pass
     timer = threading.Timer(180.0, force_kill_black)
@@ -801,7 +819,10 @@ def run_black_detection(
             if "http error 403" in line.lower() or "403 forbidden" in line.lower() or "reconnect failed" in line.lower():
                 reconnect_fail_count += 1
                 if reconnect_fail_count >= 5:
-                    process.terminate()
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
                     process.wait()
                     raise HTTPException(
                         status_code=403,
@@ -832,6 +853,10 @@ def run_black_detection(
         return black_intervals
     finally:
         timer.cancel()
+        try:
+            process.kill()
+        except Exception:
+            pass
 
 def verify_restart_text(
     stream_url: str,
@@ -888,17 +913,21 @@ def verify_restart_text(
     if "http_proxy" in env: del env["http_proxy"]
     if "https_proxy" in env: del env["https_proxy"]
     import threading
+    
+    print(f"[verify_restart_text] 正在啟動 FFmpeg，時間點: {start_time}s...")
     process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=frame_size * 5, env=env)
+    print(f"[verify_restart_text] FFmpeg 已啟動，PID: {process.pid}")
     
     # 啟動 15 秒超時定時器，防止網路連線卡住導致 stdout.read 阻塞
     def force_kill():
         try:
-            print(f"[verify_restart_text] 偵測到影片段落 {start_time}s 的畫面下載超時，強行中止連線...", flush=True)
-            process.terminate()
-        except Exception:
-            pass
+            print(f"[verify_restart_text] 【超時警告】偵測到影片段落 {start_time}s 的畫面下載超時，強行 kill 進程...", flush=True)
+            process.kill()
+        except Exception as e:
+            print(f"[verify_restart_text] 強殺進程失敗: {e}", flush=True)
     timer = threading.Timer(15.0, force_kill)
     timer.start()
+    print(f"[verify_restart_text] 15秒超時定時器已啟動。")
     
     match_found = False
     best_score = 0.0
@@ -906,11 +935,17 @@ def verify_restart_text(
     
     try:
         frame_idx = 0
+        print(f"[verify_restart_text] 開始讀取畫面幀...")
         while True:
             raw_frame = process.stdout.read(frame_size)
             if len(raw_frame) != frame_size:
+                print(f"[verify_restart_text] 讀取結束或中斷，已讀取 {frame_idx} 幀 (最後大小: {len(raw_frame)})")
                 break
             
+            # 每 5 幀印一次日誌，提供偵錯資訊
+            if frame_idx % 5 == 0:
+                print(f"[verify_restart_text] 正在處理第 {frame_idx} 幀...")
+                
             frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((crop_h, crop_w, 3))
             
             # HSV 金色過濾
@@ -947,18 +982,24 @@ def verify_restart_text(
                     if max_val >= actual_threshold:
                         match_found = True
                         detected_at = start_time + frame_idx
+                        print(f"[verify_restart_text] 第 {frame_idx} 幀匹配成功！分數: {max_val:.2f} (閥值: {actual_threshold})")
                         break
                         
             if match_found:
                 break
             frame_idx += 1
     finally:
+        print(f"[verify_restart_text] 進入 finally 區塊，開始回收資源...")
         timer.cancel()
+        print(f"[verify_restart_text] 定時器已取消。")
         try:
-            process.terminate()
+            print(f"[verify_restart_text] 強制殺死 FFmpeg 進程 (PID: {process.pid})...")
+            process.kill()
         except Exception:
             pass
+        print(f"[verify_restart_text] 正在等待進程結束 (process.wait)...")
         process.wait()
+        print(f"[verify_restart_text] FFmpeg 進程已結束，Exit Code: {process.returncode}")
         
     return match_found, detected_at, best_score
 
