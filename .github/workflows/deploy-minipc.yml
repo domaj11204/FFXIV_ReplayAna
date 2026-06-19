@@ -89,3 +89,29 @@ jobs:
             docker image prune -f
             
             echo "✅ Mini-PC 地端服務已成功更新並重啟！"
+
+      - name: Send Discord Notification
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK }}"
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "未設定 DISCORD_WEBHOOK，跳過通知。"
+            exit 0
+          fi
+          
+          COLOR=3066993 # 藍色 (預設)
+          if [ "$STATUS" = "success" ]; then
+            COLOR=5025616 # 綠色 (SUCCESS)
+            TEXT="✅ FFXIV Wipe Analyzer 部署成功！"
+            DESC="版本: **${{ github.ref_name }}**\n環境: **Mini-PC 地端**\n部署狀態: **成功 (Success)**"
+          else
+            COLOR=16007990 # 紅色 (FAILURE / CANCELLED)
+            TEXT="❌ FFXIV Wipe Analyzer 部署失敗！"
+            DESC="版本: **${{ github.ref_name }}**\n環境: **Mini-PC 地端**\n部署狀態: **失敗/取消 (Failure/Cancelled)**\n請前往 GitHub Actions 檢視錯誤日誌。"
+          fi
+          
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d "{\"embeds\": [{\"title\": \"$TEXT\", \"description\": \"$DESC\", \"color\": $COLOR}]}" \
+               "$WEBHOOK_URL"
