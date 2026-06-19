@@ -779,11 +779,23 @@ def run_black_detection(
     pattern = re.compile(r'black_start:([\d\.]+)\s+black_end:([\d\.]+)\s+black_duration:([\d\.]+)')
     
     all_stderr_lines = []
+    reconnect_fail_count = 0
     while True:
         line = process.stderr.readline()
         if not line:
             break
         all_stderr_lines.append(line)
+        
+        # 偵測是否被 YouTube 阻擋或重連失敗，主動終止防卡死
+        if "http error 403" in line.lower() or "403 forbidden" in line.lower() or "reconnect failed" in line.lower():
+            reconnect_fail_count += 1
+            if reconnect_fail_count >= 5:
+                process.terminate()
+                process.wait()
+                raise HTTPException(
+                    status_code=403,
+                    detail="與 YouTube 影片伺服器的連線遭拒絕 (HTTP 403 Forbidden)。\n請在 mini-pc 本地提供有效的 cookies.txt 以避開限制。"
+                )
         match = pattern.search(line)
         if match:
             start = float(match.group(1))
