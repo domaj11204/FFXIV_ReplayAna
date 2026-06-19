@@ -16,5 +16,5 @@ roi_center.png
 .gcloud_config/
 cookies.txt
 *cookies*.txt
-
-
+# Environment variables
+.env

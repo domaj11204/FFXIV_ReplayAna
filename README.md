@@ -63,23 +63,171 @@ gcloud run deploy ffxiv-replay-ana \
   --quiet
 ```
 
-*若使用自定義 `cloudbuild.yaml` 進行 CI/CD 流水線編譯，請參考：*
+### 2. 啟動 Discord Bot (本地 / 獨立模式)
 ```bash
-gcloud builds submit --config=cloudbuild.yaml --project="inspiring-bee-481116-m0"
+# 使用 uv 啟動機器人
+uv run python discord_bot.py
+```
+
+### 3. 指令說明
+在 Discord 中輸入 `/analyze` 指令：
+* `youtube_url` (必填)：YouTube 影片網址
+* `threshold` (選填)：RESTART 模板比對相似度閾值 (預設 0.65)
+* `x_min` / `x_max` / `y_min` / `y_max` (選填)：裁切偵測區域比例
+* `scan_duration_limit` (選填)：限制只分析影片前 N 秒 (0 表示分析整部)
+
+---
+
+## 🚀 三種建置與部署版本指南
+
+本專案已完全優化，提供以下三種不同場景的部署與使用方式，滿足安全性、獨立運作與便捷性的需求。
+
+### 1. 模式一：Cloud Run 全雲端版
+適合需要 24 小時在線、不想耗用本地硬體資源的情境。
+
+* **部署方式**：使用 Cloud Build 將代碼打包並部署至 Cloud Run。
+* **部署指令範例**：
+  ```bash
+  gcloud run deploy ffxiv-replay-ana \
+    --image asia-east1-docker.pkg.dev/YOUR_PROJECT_ID/cloud-run-source-deploy/ffxiv-replay-ana:latest \
+    --region asia-east1 \
+    --set-env-vars GCS_BUCKET_NAME="YOUR_BUCKET"
+  ```
+
+### 2. 模式二：任何 Docker 運行的獨立 HTTP-Server (支援 IPv6 雙棧 + 質感 Web UI)
+如果您想直接提供一個「看起來安全、沒有奇怪 URL 參數」的網頁工具給朋友，或是希望在擁有公網 IPv6 的本地 Ubuntu / NAS 上運行，這是最方便的選擇。
+
+* **特色**：
+  * **內建 FFXIV 暗黑科技風網頁**：打開瀏覽器直接點擊，包含輸入框、動態分析進度與「一鍵複製結果」按鈕，極富遊戲代入感。
+  * **IPv6 雙棧支援**：Docker 內部將 Uvicorn 綁定至 `::`。在支援雙棧的系統上，能同時監聽 IPv6 與 IPv4 請求。
+* **運行指令 (方案 A：與 GCS 整合)**：
+  ```bash
+  docker run -d -p 8080:8080 \
+    -e GCS_BUCKET_NAME="YOUR_BUCKET" \
+    -e GOOGLE_APPLICATION_CREDENTIALS="/app/key.json" \
+    -v $(pwd)/key.json:/app/key.json \
+    --name ffxiv-analyzer-web \
+    ffxiv-replay-ana
+  ```
+* **運行指令 (方案 B：純本地獨立模式)**：
+  如果您想完全擺脫 GCP/GCS，將本地 `cookies.txt` 與模板掛載進去即可：
+  ```bash
+  docker run -d -p 8080:8080 \
+    -v $(pwd)/cookies.txt:/app/cookies.txt \
+    -v $(pwd)/restart_template.png:/app/restart_template.png \
+    --name ffxiv-analyzer-web \
+    ffxiv-replay-ana
+  ```
+* **如何使用**：
+  用瀏覽器訪問 `http://[YOUR_IPV6_ADDRESS]:8080/` 或 `http://localhost:8080/`，即可看到精美的圖形化分析工具。
+
+### 3. 模式三：Discord User-Installable App (個人帳號安裝版)
+特別適合隊友「**沒有伺服器管理員權限，無法把機器人拉進頻道**」的情境。
+
+* **特色**：
+  * 隊友可以將 Bot 直接安裝到「個人帳號」，而不是伺服器。
+  * 隊友可在**任何伺服器**的輸入框直接呼叫 `/analyze`，或是在與機器人的**私訊對話框 (DM)** 中單獨使用，隱私且不打擾他人。
+* **配置步驟**：
+  1. 進入 [Discord Developer Portal](https://discord.com/developers/applications)。
+  2. 選擇您的 Bot，點選左側選單的 **Installation**。
+  3. 在 **Installation Contexts** 勾選 **User Install** (可與 Guild Install 並存)。
+  4. 在 **Default Install Settings** 的 Scopes 中加入 `applications.commands`。
+  5. 複製下方的 **Install Link** 分享給您的朋友。朋友點擊後選擇「新增至我的應用程式 (Add to My Apps)」即可完成安裝。
+
+---
+
+## 🛠️ CI/CD 自動化管道說明
+
+我們在 `.github/workflows/` 下為這三種版本配置了對應的 GitHub Actions CI/CD，讓您修改程式碼後可輕鬆實現自動建置與部署。
+
+### 1. GCP Cloud Run 自動部署 (`deploy-cloudrun.yml`)
+當推送變更至 `main` 分支且修改了 `main.py` 或 Docker 設定時，會自動編譯並重新部署至 Cloud Run。
+* **需要設定的 Repository Secrets**：
+  * `GCP_PROJECT_ID`：您的 GCP 專案 ID。
+  * `GCP_SA_KEY`：擁有 Artifact Registry 寫入權限與 Cloud Run 管理員權限的 Service Account 金鑰 JSON。
+  * `GCS_BUCKET_NAME`：用於存放 assets 的 GCP 儲存桶名稱。
+
+### 2. GHCR 獨立 Docker 鏡像發布 (`build-docker-image.yml`)
+當您在 Git 建立並推送以 `v` 開頭的 Tag (例如 `v1.0.0`)，或是在 Actions 面板手動點擊執行時，工作流會自動打包 Docker 鏡像，並將其推送到 GitHub Container Registry (GHCR)。
+* **使用方式**：
+  不需要設定額外的 Secrets！打包完成後，任何人皆可直接拉取最新的 Docker 鏡像：
+  ```bash
+  docker pull ghcr.io/YOUR_GITHUB_USERNAME/ffxiv-replay-ana:latest
+  ```
+
+### 3. 遠端 VM Discord Bot 自動更新 (`deploy-discord-bot.yml`)
+當推送變更至 `main` 分支且修改了 `discord_bot.py` 時，會自動透過 SSH 登入您託管 Bot 的虛擬主機，拉取最新代碼、同步 `uv` 依賴並重啟 PM2 服務。
+* **需要設定的 Repository Secrets**：
+  * `SERVER_HOST`：您虛擬主機的公網 IP 位址。
+  * `SERVER_USER`：SSH 登入帳號。
+  * `SSH_PRIVATE_KEY`：登入伺服器所用的 SSH 私鑰。
+  * `SERVER_PORT`：（選填）SSH 連接埠，預設為 22。
+
+---
+
+## 🐳 Docker 部署與跨平台運行指南 (本地 / Ubuntu / 任何伺服器)
+
+本專案已完全容器化，API 服務可以透過 `Dockerfile` 打包，並輕鬆遷移至任何安裝有 Docker 的 Ubuntu 或其他作業系統中運行。
+
+### 1. 建置 Docker 映像檔
+在專案根目錄下，執行以下命令進行映像檔打包：
+```bash
+docker build -t ffxiv-replay-ana .
+```
+
+### 2. 在 Ubuntu 或本地運行容器
+依據您的整合方式，選擇以下其中一種執行方式：
+
+#### 方案甲：與 GCS 整合模式 (與雲端相同)
+此模式會自動下載 GCS 儲存桶中的 `cookies.txt` 與模板，需要掛載您的 GCP 憑證金鑰：
+```bash
+docker run -d -p 8080:8080 \
+  -e PROXY_URL="http://k4zo76031-region-TW-sid-yW5Pb2GJ-t-5:jkmchk4r@hk.novproxy.io:1000" \
+  -e GCS_BUCKET_NAME="inspiring-bee-481116-m0-ffxiv-assets" \
+  -e GOOGLE_APPLICATION_CREDENTIALS="/app/inspiring-bee-481116-m0-1b2c8b808a2a.json" \
+  -v $(pwd)/inspiring-bee-481116-m0-1b2c8b808a2a.json:/app/inspiring-bee-481116-m0-1b2c8b808a2a.json \
+  --name ffxiv-analyzer \
+  ffxiv-replay-ana
+```
+
+#### 方案乙：純本地獨立模式 (不依賴 GCP 金鑰與 GCS)
+如果您不希望使用 GCS 下載，可以直接把本地的 `cookies.txt` 與 `restart_template.png` 映射進去：
+```bash
+docker run -d -p 8080:8080 \
+  -v $(pwd)/cookies.txt:/app/cookies.txt \
+  -v $(pwd)/restart_template.png:/app/restart_template.png \
+  --name ffxiv-analyzer \
+  ffxiv-replay-ana
 ```
 
 ---
 
-## 🔒 安全授權測試 (E2E Verification)
+## 🌐 建議：如何提供 URL 給外網 (Discord Bot) 使用？
 
-由於 Cloud Run 服務已被設為私有，本地測試腳本 [test_first_11m.py](test_first_11m.py) 已整合了自動化認證與驗證流程：
+如果您將此 API 服務部署在本地電腦或局域網的 Ubuntu 伺服器上，但需要讓外網（例如 Discord Bot 服務端）能夠訪問它，以下是推薦的兩種外網暴露（Tunneling）管道：
 
-1. **認證金鑰簽發**：腳本會自動調用本地的 `gcloud` 獲取合法的 Identity Token。
-2. **自動 Cookie 輔助**：若本地瀏覽器（Chrome/Edge/Firefox）已登入 YouTube，腳本會自動提取該 Cookie 作為分析參數發送，避開 GCP IP 遭到封鎖的 Bot Check。
+### 管道 A：Cloudflare Tunnel (最推薦 🌟)
+這套方案完全免費、無需公網 IP、不需在路由器進行 Port Forwarding (虛擬伺服器設定)，且由 Cloudflare 提供 DDoS 安全防護。
 
-### 執行分析測試
-```bash
-# 本地執行 E2E 測試 (預設指向部署好的 Cloud Run 私有 URL)
-uv run python test_first_11m.py
-```
-這將會透過安全通道將請求發送給雲端的私有 Cloud Run，並由雲端進行 11 分鐘的 Wipe 分析後回傳 JSON 結果！
+1. **在 Ubuntu 上安裝 Cloudflare 守護進程**：
+   ```bash
+   sudo apt-get install cloudflared
+   ```
+2. **一鍵將本地 8080 連接埠暴露至外網**：
+   ```bash
+   cloudflared tunnel --url http://localhost:8080
+   ```
+3. **獲取外網 URL**：
+   執行後控制台會印出一個臨時的隨機 HTTPS 域名，例如 `https://your-unique-subdomain.trycloudflare.com`。
+4. **Discord Bot 配置**：
+   直接將此 URL 寫入 Discord Bot 本地 `.env` 中的 `CLOUD_RUN_URL` 環境變數即可：
+   `CLOUD_RUN_URL=https://your-unique-subdomain.trycloudflare.com/analyze`
+
+### 管道 B：ngrok (適合臨時快速調試)
+1. 註冊並安裝 [ngrok](https://ngrok.com/)。
+2. 終端機執行：
+   ```bash
+   ngrok http 8080
+   ```
+3. 獲得類似 `https://xxxx.ngrok-free.app` 的隨機外網 URL，寫入 Discord Bot 設定檔即可使用。
+

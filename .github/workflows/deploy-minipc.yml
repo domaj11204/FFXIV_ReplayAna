@@ -1,0 +1,64 @@
+name: Deploy Web UI & API to Home Mini-PC via Tailscale Proxy
+
+on:
+  push:
+    tags:
+      - 'v*' # 當推送版本 Tag (如 v1.0.0) 時觸發
+  workflow_dispatch: # 允許手動觸發
+
+jobs:
+  deploy-to-minipc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Execute Remote SSH Commands via GCP ProxyJump
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          # 目標主機 (您的 mini-pc)
+          host: ${{ secrets.MINI_PC_HOST }}
+          username: ${{ secrets.MINI_PC_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          
+          # 代理跳板 (GCP 主機)
+          proxy_host: ${{ secrets.GCP_HOST }}
+          proxy_username: ${{ secrets.GCP_USER }}
+          proxy_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          proxy_port: 22
+          
+          # 防範首次連線時的 Host Key 驗證詢問導致 Actions 卡死
+          disable_verify_host: true
+          
+          # 部署執行指令
+          script: |
+            # 建立並進入部署目錄
+            mkdir -p ~/mttrn/tool/ffxiv-dc-bot && cd ~/mttrn/tool/ffxiv-dc-bot
+            
+            # 1. 取得 GitHub 倉庫名稱並轉為小寫 (符合 Docker Image 命名規範)
+            REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+            
+            echo "正在拉取最新 Docker 鏡像: ghcr.io/${REPO_LOWER}:latest"
+            docker pull ghcr.io/${REPO_LOWER}:latest
+            
+            # 2. 停止並刪除舊有的 Web 服務容器 (如果存在)
+            if [ "$(docker ps -aq -f name=ffxiv-analyzer-web)" ]; then
+              echo "偵測到既有容器，正在停止並移除..."
+              docker stop ffxiv-analyzer-web
+              docker rm ffxiv-analyzer-web
+            fi
+            
+            # 3. 使用本地的環境變數檔啟動新容器
+            echo "啟動新容器..."
+            docker run -d \
+              --name ffxiv-analyzer-web \
+              --restart unless-stopped \
+              --network host \
+              --env-file .env \
+              ghcr.io/${REPO_LOWER}:latest
+              
+            # 4. 清理過期的虛擬映像檔以節省磁碟空間
+            docker image prune -f
+            
+            echo "✅ Mini-PC 地端服務已成功更新並重啟！"

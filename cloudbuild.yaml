@@ -19,5 +19,9 @@ steps:
       'run', 'deploy', 'ffxiv-replay-ana',
       '--image', 'asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ffxiv-replay-ana:$COMMIT_SHA',
       '--region', 'asia-east1',
-      '--no-allow-unauthenticated'
+      '--no-allow-unauthenticated',
+      '--set-env-vars', 'GCS_BUCKET_NAME=inspiring-bee-481116-m0-ffxiv-assets'
     ]
+
+substitutions:
+  COMMIT_SHA: 'latest'

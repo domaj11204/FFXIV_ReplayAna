@@ -1,0 +1,503 @@
+import os
+import json
+import io
+import time
+import aiohttp
+import discord
+import subprocess
+import asyncio
+from discord import app_commands
+from discord.ext import commands
+from dotenv import load_dotenv
+import google.auth.transport.requests
+from google.oauth2 import service_account
+from google.cloud import storage
+
+# 載入 .env 檔案
+load_dotenv()
+
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
+CLOUD_RUN_URL = os.environ.get("CLOUD_RUN_URL", "https://ffxiv-replay-ana-471169883214.asia-east1.run.app/analyze")
+GOOGLE_APPLICATION_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+# 確保必要的環境變數存在
+if not DISCORD_BOT_TOKEN:
+    print("警告：未設定 DISCORD_BOT_TOKEN 環境變數，機器人可能無法正常啟動。")
+
+def get_oidc_token(audience: str) -> str:
+    """
+    獲取針對私有 Cloud Run 服務 (audience) 的 GCP OIDC ID Token。
+    優先使用服務帳戶金鑰，Fallback 至本地 gcloud 命令行工具。
+    """
+    # 優先嘗試使用 Service Account 簽發 OIDC Token
+    if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+        try:
+            creds = service_account.IDTokenCredentials.from_service_account_file(
+                GOOGLE_APPLICATION_CREDENTIALS, target_audience=audience
+            )
+            auth_req = google.auth.transport.requests.Request()
+            creds.refresh(auth_req)
+            return creds.token
+        except Exception as e:
+            print(f"使用服務帳戶金鑰獲取 Token 失敗：{e}。將嘗試使用本地 gcloud Fallback...")
+
+    # Fallback：嘗試使用本地的 gcloud 命令行工具獲取
+    try:
+        env = os.environ.copy()
+        # 若有本地 .gcloud_config 目錄則使用
+        local_config = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".gcloud_config")
+        if os.path.exists(local_config):
+            env["CLOUDSDK_CONFIG"] = local_config
+
+        cmd = ["gcloud.cmd", "auth", "print-identity-token", f"--audiences={audience}"]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env)
+            return result.stdout.strip()
+        except FileNotFoundError:
+            cmd[0] = "gcloud"
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env)
+            return result.stdout.strip()
+    except Exception as e:
+        raise RuntimeError(
+            f"無法獲取 GCP 身分驗證 Token。請確認已設定 GOOGLE_APPLICATION_CREDENTIALS "
+            f"或已在本地透過 gcloud 完成登入。詳細錯誤：{e}"
+        )
+
+def format_time(seconds):
+    seconds = max(0, seconds)
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    else:
+        return f"{m:02d}:{s:02d}"
+
+class TimelineView(discord.ui.View):
+    """
+    提供互動式按鈕的前端介面元件。
+    """
+    def __init__(self, wipes: list, video_title: str, video_duration: float):
+        super().__init__(timeout=None)  # 按鈕永久有效，直到 bot 重啟
+        self.wipes = wipes
+        self.video_title = video_title
+        self.video_duration = video_duration
+
+    def generate_timeline(self, use_restart_time=False) -> str:
+        lines = ["00:00 戰鬥開始 / 影片起點"]
+        for w in self.wipes:
+            seconds = w.get("restart_word_detected_at") if use_restart_time else w.get("black_screen_start")
+            time_str = format_time(seconds)
+            label = f"RESTART #{w.get('wipe_number')}" if use_restart_time else f"滅團 #{w.get('wipe_number')}"
+            lines.append(f"{time_str} {label}")
+        return "\n".join(lines)
+
+    @discord.ui.button(label="複製時間軸 (黑屏點)", style=discord.ButtonStyle.primary, emoji="🔵")
+    async def copy_black(self, interaction: discord.Interaction, button: discord.ui.Button):
+        timeline = self.generate_timeline(use_restart_time=False)
+        await interaction.response.send_message(
+            content=f"**{self.video_title} - 時間軸 (以滅團黑屏為基準)**\n```\n{timeline}\n```",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="複製時間軸 (RESTART點)", style=discord.ButtonStyle.success, emoji="🟢")
+    async def copy_restart(self, interaction: discord.Interaction, button: discord.ui.Button):
+        timeline = self.generate_timeline(use_restart_time=True)
+        await interaction.response.send_message(
+            content=f"**{self.video_title} - 時間軸 (以 RESTART 字樣為基準)**\n```\n{timeline}\n```",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="下載原始 JSON", style=discord.ButtonStyle.secondary, emoji="📄")
+    async def download_json(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data_str = json.dumps({"wipes": self.wipes, "video_title": self.video_title, "video_duration_seconds": self.video_duration}, indent=2, ensure_ascii=False)
+        file = discord.File(fp=io.BytesIO(data_str.encode("utf-8")), filename="analysis_result.json")
+        await interaction.response.send_message(
+            content="這是原始 JSON 分析結果檔：",
+            file=file,
+            ephemeral=True
+        )
+
+class WipeBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=discord.Intents.default())
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        # 同步 Slash Commands
+        await self.tree.sync()
+
+bot = WipeBot()
+
+@bot.event
+async def on_ready():
+    print(f"🤖 Discord Bot 已啟動並成功連線！")
+    print(f"帳號名稱：{bot.user.name} (ID: {bot.user.id})")
+    print(f"已註冊 Slash Commands，目前正監聽指令...")
+    
+    # 啟動時自動從 GCS 儲存桶同步最新的 cookie 到本地保存，以支援 GCS Bridge 本地解析
+    try:
+        bucket_name = "inspiring-bee-481116-m0-ffxiv-assets"
+        def sync_cookie():
+            if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
+            else:
+                client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob("cookies.txt")
+            if blob.exists():
+                blob.download_to_filename("www.youtube.com_cookies.txt")
+                print("成功自 GCS 儲存桶同步 cookies.txt 至本地檔案！")
+            else:
+                print("儲存桶上找不到 cookies.txt，跳過同步。")
+        await asyncio.to_thread(sync_cookie)
+    except Exception as e:
+        print(f"⚠️ 啟動同步 GCS Cookie 失敗：{e}")
+
+@bot.tree.command(name="analyze", description="分析 FFXIV 影片並辨識滅團 (Wipe) 時間點")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.describe(
+    youtube_url="YouTube 影片網址 (例如 https://youtube.com/live/...)",
+    threshold="RESTART 模板比對相似度閾值 (預設 0.65)",
+    x_min="偵測區域左邊界比例 (0.0 ~ 1.0, 預設 0.30)",
+    x_max="偵測區域右邊界比例 (0.0 ~ 1.0, 預設 0.70)",
+    y_min="偵測區域上邊界比例 (0.0 ~ 1.0, 預設 0.25)",
+    y_max="偵測區域下邊界比例 (0.0 ~ 1.0, 預設 0.50)",
+    scan_duration_limit="限制只分析影片前 N 秒 (0 表示分析整部，預設 0)"
+)
+async def analyze(
+    interaction: discord.Interaction,
+    youtube_url: str,
+    threshold: float = 0.65,
+    x_min: float = 0.30,
+    x_max: float = 0.70,
+    y_min: float = 0.25,
+    y_max: float = 0.50,
+    scan_duration_limit: float = 0.0
+):
+    # Defer 回應：防超時，允許長達 15 分鐘的處理窗口
+    await interaction.response.defer(ephemeral=False)
+    
+    # 建立初步處理狀態的 Embed
+    embed = discord.Embed(
+        title="🎬 FFXIV 滅團分析任務已啟動",
+        description="正在連接至雲端分析引擎，請耐心等待...",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="影片網址", value=youtube_url, inline=False)
+    embed.add_field(name="相似度閾值", value=str(threshold), inline=True)
+    embed.add_field(name="裁切範圍 (X)", value=f"{x_min} ~ {x_max}", inline=True)
+    embed.add_field(name="裁切範圍 (Y)", value=f"{y_min} ~ {y_max}", inline=True)
+    if scan_duration_limit > 0:
+        embed.add_field(name="掃描長度限制", value=f"僅掃描前 {scan_duration_limit} 秒", inline=False)
+        
+    status_msg = await interaction.followup.send(embed=embed)
+
+    # 1. 取得 GCP ID Token
+    try:
+        audience = CLOUD_RUN_URL.split("/analyze")[0]
+        token = get_oidc_token(audience)
+    except Exception as e:
+        error_embed = discord.Embed(
+            title="❌ GCP 身分驗證錯誤",
+            description=f"無法取得 GCP 認證 Token。\n請確認伺服器之認證環境或金鑰設定。\n\n**詳細原因：**\n`{str(e)}`",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=error_embed)
+        return
+
+    # 2. 準備 API 請求
+    payload = {
+        "youtube_url": youtube_url,
+        "template_name": "restart_template.png",
+        "threshold": threshold,
+        "x_min": x_min,
+        "x_max": x_max,
+        "y_min": y_min,
+        "y_max": y_max,
+        "scan_duration_limit": scan_duration_limit
+    }
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+
+    # 3. 發送 API 請求至 Cloud Run
+    try:
+        # 使用 15 分鐘 (900 秒) 的 timeout，支援長影片分析
+        timeout = aiohttp.ClientTimeout(total=900)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(CLOUD_RUN_URL, json=payload, headers=headers) as response:
+                if response.status != 200:
+                    err_body = await response.text()
+                    try:
+                        err_json = json.loads(err_body)
+                        err_detail = err_json.get("detail", err_body)
+                    except Exception:
+                        err_detail = err_body
+                        
+                    # 偵測是否被 YouTube Bot 檢測阻擋，若是則啟動 GCS 儲存桶橋接 Fallback 機制
+                    if "Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail:
+                        fallback_embed = discord.Embed(
+                            title="🔄 啟動 GCS 儲存桶橋接機制...",
+                            description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                            color=discord.Color.orange()
+                        )
+                        fallback_embed.add_field(name="影片網址", value=youtube_url, inline=False)
+                        await status_msg.edit(embed=fallback_embed)
+                        
+                        output_filename = None
+                        gcs_blob_name = None
+                        try:
+                            # 1. 決定臨時檔案路徑
+                            import tempfile
+                            temp_dir = tempfile.gettempdir()
+                            temp_filename = f"ffxiv_temp_{int(time.time())}.mp4"
+                            output_filename = os.path.join(temp_dir, temp_filename)
+                            
+                            # 2. 本地使用最新 Cookie 下載影片 (最低解析度/體積最小)
+                            await fallback_embed.edit_field(
+                                index=0, 
+                                name="目前狀態", 
+                                value="📥 正在本地提取影片串流中 (下載最低畫質 Worst Video 以節省頻寬)..."
+                            )
+                            await status_msg.edit(embed=fallback_embed)
+                            
+                            cmd = ["uv", "run", "yt-dlp"]
+                            if os.path.exists("www.youtube.com_cookies.txt"):
+                                cmd.extend(["--cookies", "www.youtube.com_cookies.txt"])
+                            elif os.path.exists("cookies.txt"):
+                                cmd.extend(["--cookies", "cookies.txt"])
+                                
+                            cmd.extend(["-f", "worstvideo/worst", "-o", output_filename, youtube_url])
+                            
+                            process = await asyncio.create_subprocess_exec(
+                                *cmd,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL
+                            )
+                            await process.wait()
+                            
+                            if not os.path.exists(output_filename) or os.path.getsize(output_filename) == 0:
+                                raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
+                                
+                            # 3. 上傳影片至 GCS 儲存桶
+                            await fallback_embed.edit_field(
+                                index=0, 
+                                name="目前狀態", 
+                                value="📤 影片提取成功！正在將影片同步上傳至雲端 GCS 儲存桶..."
+                            )
+                            await status_msg.edit(embed=fallback_embed)
+                            
+                            bucket_name = "inspiring-bee-481116-m0-ffxiv-assets"
+                            gcs_blob_name = f"videos/{temp_filename}"
+                            gcs_path = f"gs://{bucket_name}/{gcs_blob_name}"
+                            
+                            def upload_to_gcs():
+                                if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                                    client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
+                                else:
+                                    client = storage.Client()
+                                bucket = client.bucket(bucket_name)
+                                blob = bucket.blob(gcs_blob_name)
+                                blob.upload_from_filename(output_filename, content_type="video/mp4")
+                                
+                            await asyncio.to_thread(upload_to_gcs)
+                            
+                            # 4. 以 GCS 影片路徑再次請求 Cloud Run 分析
+                            await fallback_embed.edit_field(
+                                index=0, 
+                                name="目前狀態", 
+                                value="🎬 影片同步完成！正在啟動雲端 FFXIV 滅團影像分析引擎..."
+                            )
+                            await status_msg.edit(embed=fallback_embed)
+                            
+                            fallback_payload = payload.copy()
+                            fallback_payload["youtube_url"] = gcs_path
+                            
+                            async with session.post(CLOUD_RUN_URL, json=fallback_payload, headers=headers) as response2:
+                                if response2.status != 200:
+                                    err_body2 = await response2.text()
+                                    raise RuntimeError(f"雲端分析 GCS 影片失敗，狀態碼: {response2.status}，原因: {err_body2}")
+                                result = await response2.json()
+                                
+                            # 5. 分析成功後，背景非同步清理 GCS 臨時影片與本地檔案
+                            def clean_up():
+                                try:
+                                    if os.path.exists(output_filename):
+                                        os.remove(output_filename)
+                                except Exception:
+                                    pass
+                                try:
+                                    if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                                        client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
+                                    else:
+                                        client = storage.Client()
+                                    bucket = client.bucket(bucket_name)
+                                    blob = bucket.blob(gcs_blob_name)
+                                    if blob.exists():
+                                        blob.delete()
+                                        print(f"成功清理 GCS 臨時影片：{gcs_path}")
+                                except Exception as e_clean:
+                                    print(f"清理 GCS 臨時影片失敗：{e_clean}")
+                                    
+                            asyncio.create_task(asyncio.to_thread(clean_up))
+                            
+                        except Exception as e_fallback:
+                            # 發生錯誤時清理本地與雲端檔案
+                            try:
+                                if output_filename and os.path.exists(output_filename):
+                                    os.remove(output_filename)
+                            except Exception:
+                                pass
+                            try:
+                                if gcs_blob_name:
+                                    def delete_gcs():
+                                        if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                                            client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
+                                        else:
+                                            client = storage.Client()
+                                        bucket = client.bucket(bucket_name)
+                                        blob = bucket.blob(gcs_blob_name)
+                                        if blob.exists():
+                                            blob.delete()
+                                    asyncio.create_task(asyncio.to_thread(delete_gcs))
+                            except Exception:
+                                pass
+                                
+                            error_embed = discord.Embed(
+                                title="❌ 儲存桶橋接 Fallback 失敗",
+                                description=f"執行影片提取與儲存桶橋接時發生錯誤：\n`{str(e_fallback)}`",
+                                color=discord.Color.red()
+                            )
+                            await status_msg.edit(embed=error_embed)
+                            return
+                            
+                    else:
+                        error_embed = discord.Embed(
+                            title="❌ 雲端分析失敗",
+                            description=f"雲端 Cloud Run 服務回傳了錯誤代碼 `{response.status}`。",
+                            color=discord.Color.red()
+                        )
+                        error_embed.add_field(name="錯誤詳情", value=f"```\n{err_detail}\n```", inline=False)
+                        await status_msg.edit(embed=error_embed)
+                        return
+                else:
+                    result = await response.json()
+    except Exception as e:
+        error_embed = discord.Embed(
+            title="❌ 連線雲端 API 失敗",
+            description=f"與雲端分析伺服器連線時發生未預期錯誤：\n`{str(e)}`",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=error_embed)
+        return
+
+    # 4. 分析成功，處理結果
+    video_title = result.get("video_title", "未知的影片")
+    video_duration = result.get("video_duration_seconds", 0.0)
+    wipes = result.get("wipes", [])
+    
+    success_embed = discord.Embed(
+        title="✅ 影像分析成功！",
+        description=f"影片 **{video_title}** 分析已順利完成。",
+        color=discord.Color.green()
+    )
+    success_embed.add_field(name="影片長度", value=format_time(video_duration), inline=True)
+    success_embed.add_field(name="辨識滅團總數", value=f"{len(wipes)} 次", inline=True)
+    
+    # 在 Embed 中列出簡要的時間點列表 (前 10 次，若太多以防溢出)
+    if wipes:
+        wipes_summary = []
+        for w in wipes[:10]:
+            time_str = format_time(w.get("black_screen_start"))
+            score = w.get("similarity_score", 0.0)
+            wipes_summary.append(f"• **滅團 #{w.get('wipe_number')}**: `{time_str}` (相似度: {score:.2f})")
+            
+        if len(wipes) > 10:
+            wipes_summary.append(f"*...以及其餘 {len(wipes) - 10} 次滅團記錄*")
+            
+        success_embed.add_field(name="滅團時間點摘要", value="\n".join(wipes_summary), inline=False)
+    else:
+        success_embed.add_field(name="偵測結果", value="未偵測到任何滅團 (Wipe) 影格。", inline=False)
+        
+    # 掛載按鈕元件 (TimelineView)
+    view = TimelineView(wipes, video_title, video_duration)
+    
+    # 編輯原本的思考訊息，呈現最終精美結果與按鈕
+    await status_msg.edit(embed=success_embed, view=view)
+
+@bot.tree.command(name="update_cookies", description="更新雲端儲存桶中的 YouTube Cookies")
+@app_commands.describe(cookie_file="從瀏覽器導出的 cookies.txt 檔案 (純文字 .txt 格式)")
+@app_commands.checks.has_permissions(administrator=True)
+async def update_cookies(interaction: discord.Interaction, cookie_file: discord.Attachment):
+    # 檢查檔案名稱與副檔名
+    if not cookie_file.filename.endswith(".txt"):
+        await interaction.response.send_message("❌ 錯誤：請上傳一個純文字的 `.txt` 格式 Cookie 檔案。", ephemeral=True)
+        return
+        
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # 1. 讀取附件內容
+        content_bytes = await cookie_file.read()
+        content_str = content_bytes.decode("utf-8", errors="ignore")
+        
+        # 2. 檢查是否具有 YouTube Cookie 的基本特徵，確保沒上傳錯檔案
+        if "youtube.com" not in content_str:
+            await interaction.followup.send("⚠️ 警告：上傳的檔案內容看起來不包含 youtube.com 的 Cookie 資料，請確認您使用的是有效的 cookies.txt 檔案。", ephemeral=True)
+            return
+            
+        # 3. 取得 GCS 儲存桶名稱
+        bucket_name = "inspiring-bee-481116-m0-ffxiv-assets"
+        
+        # 4. 非同步執行 GCS 上傳
+        def do_upload():
+            if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
+            else:
+                client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob("cookies.txt")
+            blob.upload_from_string(content_str, content_type="text/plain")
+            
+        await asyncio.to_thread(do_upload)
+        await interaction.followup.send("✅ YouTube Cookies 已成功更新並同步至雲端儲存桶！現在您可以重新執行影像分析了。", ephemeral=True)
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ 更新 Cookie 失敗，詳細原因：`{str(e)}`", ephemeral=True)
+
+@update_cookies.error
+async def update_cookies_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message(
+            "⚠️ 您無權限使用此指令。此指令僅限具有伺服器「**管理員 (Administrator)**」權限的人員使用。",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"❌ 執行指令時發生錯誤：{str(error)}",
+            ephemeral=True
+        )
+
+# 權限不足的錯誤處理
+@analyze.error
+async def analyze_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message(
+            "⚠️ 您無權限使用此指令。此指令僅限具有伺服器「**管理員 (Administrator)**」權限的人員使用。",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"❌ 執行指令時發生錯誤：{str(error)}",
+            ephemeral=True
+        )
+
+if __name__ == "__main__":
+    if not DISCORD_BOT_TOKEN:
+        print("錯誤：未設定 DISCORD_BOT_TOKEN。請在環境變數或 .env 檔案中填寫。")
+    else:
+        bot.run(DISCORD_BOT_TOKEN)

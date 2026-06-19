@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \
+    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # 從官方鏡像拷貝 uv 執行檔，用於超快速的套件安裝
@@ -33,5 +34,5 @@ COPY main.py restart_template.png /app/
 # 暴露埠號 (Cloud Run 會自動映射 PORT 環境變數，預設為 8080)
 EXPOSE 8080
 
-# 啟動 FastAPI 服務，使用環境變數中的 PORT
-CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT}
+# 啟動 FastAPI 服務，使用環境變數中的 PORT，綁定至 :: 支援 IPv6 雙棧
+CMD exec uvicorn main:app --host :: --port ${PORT}

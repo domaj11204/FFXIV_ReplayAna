@@ -1,0 +1,47 @@
+name: Deploy Discord Bot to VM
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'discord_bot.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/deploy-discord-bot.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Execute SSH commands on VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            # 進入專案目錄
+            cd /app/ffxiv_rpana || cd ~/ffxiv_rpana
+            
+            # 拉取最新程式碼
+            git pull origin main
+            
+            # 使用 uv 同步套件依賴
+            uv sync --no-dev
+            
+            # 重啟 Discord Bot
+            # 這裡假設使用 pm2 管理，pm2 名稱為 ffxiv-bot
+            if pm2 list | grep -q "ffxiv-bot"; then
+              pm2 restart ffxiv-bot
+            else
+              # 若第一次執行，則啟動
+              pm2 start "uv run python discord_bot.py" --name "ffxiv-bot"
+            fi
+            
+            echo "Discord Bot 部署完成！"
