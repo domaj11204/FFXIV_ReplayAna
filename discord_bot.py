@@ -88,19 +88,19 @@ class TimelineView(discord.ui.View):
         for w in self.wipes:
             seconds = w.get("restart_word_detected_at") if use_restart_time else w.get("black_screen_start")
             time_str = format_time(seconds)
-            label = f"RESTART #{w.get('wipe_number')}" if use_restart_time else f"滅團 #{w.get('wipe_number')}"
+            label = f"RESTART #{w.get('wipe_number')}" if use_restart_time else f"Wipe #{w.get('wipe_number')}"
             lines.append(f"{time_str} {label}")
         return "\n".join(lines)
 
-    @discord.ui.button(label="複製時間軸 (黑屏點)", style=discord.ButtonStyle.primary, emoji="🔵")
+    @discord.ui.button(label="複製時間軸 (黑屏點)", style=discord.ButtonStyle.primary)
     async def copy_black(self, interaction: discord.Interaction, button: discord.ui.Button):
         timeline = self.generate_timeline(use_restart_time=False)
         await interaction.response.send_message(
-            content=f"**{self.video_title} - 時間軸 (以滅團黑屏為基準)**\n```\n{timeline}\n```",
+            content=f"**{self.video_title} - 時間軸 (以 Wipe 黑屏為基準)**\n```\n{timeline}\n```",
             ephemeral=True
         )
 
-    @discord.ui.button(label="複製時間軸 (RESTART點)", style=discord.ButtonStyle.success, emoji="🟢")
+    @discord.ui.button(label="複製時間軸 (RESTART點)", style=discord.ButtonStyle.success)
     async def copy_restart(self, interaction: discord.Interaction, button: discord.ui.Button):
         timeline = self.generate_timeline(use_restart_time=True)
         await interaction.response.send_message(
@@ -108,7 +108,7 @@ class TimelineView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="下載原始 JSON", style=discord.ButtonStyle.secondary, emoji="📄")
+    @discord.ui.button(label="下載原始 JSON", style=discord.ButtonStyle.secondary)
     async def download_json(self, interaction: discord.Interaction, button: discord.ui.Button):
         data_str = json.dumps({"wipes": self.wipes, "video_title": self.video_title, "video_duration_seconds": self.video_duration}, indent=2, ensure_ascii=False)
         file = discord.File(fp=io.BytesIO(data_str.encode("utf-8")), filename="analysis_result.json")
@@ -181,8 +181,8 @@ async def analyze(
     
     # 建立初步處理狀態的 Embed
     embed = discord.Embed(
-        title="🎬 FFXIV 滅團分析任務已啟動",
-        description="正在讀取影片資訊與預估處理時間...",
+        title="FFXIV WIPE分析中",
+        description="正在讀取影片資訊與預估處理時間...\n*提示：設定僅影響準確度，不太影響計算速度*",
         color=discord.Color.blue()
     )
     embed.add_field(name="影片網址", value=youtube_url, inline=False)
@@ -228,7 +228,7 @@ async def analyze(
         print(f"快速解析影片資訊失敗：{e}")
         
     # 更新 Embed 以顯示預估耗時與標題
-    embed.description = f"正在分析影片：**{video_title}**\n正在尋找 WIPE 滅團時間點，這可能需要幾分鐘的時間，請稍候..."
+    embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點，這可能需要幾分鐘的時間，請稍候...\n*提示：設定僅影響準確度，不太影響計算速度*"
     embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
     await status_msg.edit(embed=embed)
 
@@ -266,6 +266,19 @@ async def analyze(
         headers["Authorization"] = f"Bearer {token}"
 
     # 3. 發送 API 請求至 Cloud Run
+    api_done = asyncio.Event()
+    async def update_api_progress():
+        elapsed = 0
+        while not api_done.is_set():
+            await asyncio.sleep(10)
+            elapsed += 10
+            try:
+                embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點 (已分析 {elapsed} 秒)，請稍候...\n*提示：設定僅影響準確度，不太影響計算速度*"
+                await status_msg.edit(embed=embed)
+            except Exception:
+                pass
+                
+    progress_task = asyncio.create_task(update_api_progress())
     try:
         # 使用 15 分鐘 (900 秒) 的 timeout，支援長影片分析
         timeout = aiohttp.ClientTimeout(total=900)
@@ -282,7 +295,7 @@ async def analyze(
                     # 偵測是否被 YouTube Bot 檢測阻擋，若是則啟動 GCS 儲存桶橋接 Fallback 機制
                     if "Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail:
                         fallback_embed = discord.Embed(
-                            title="🔄 啟動 GCS 儲存桶橋接機制...",
+                            title="啟動 GCS 儲存桶橋接機制...",
                             description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
                             color=discord.Color.orange()
                         )
@@ -302,7 +315,7 @@ async def analyze(
                             await fallback_embed.edit_field(
                                 index=0, 
                                 name="目前狀態", 
-                                value="📥 正在本地提取影片串流中 (下載最低畫質 Worst Video 以節省頻寬)..."
+                                value="正在本地提取影片串流中 (下載最低畫質 Worst Video 以節省頻寬)..."
                             )
                             await status_msg.edit(embed=fallback_embed)
                             
@@ -319,7 +332,27 @@ async def analyze(
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL
                             )
-                            await process.wait()
+                            
+                            async def update_download_progress():
+                                elapsed = 0
+                                while process.returncode is None:
+                                    await asyncio.sleep(10)
+                                    elapsed += 10
+                                    try:
+                                        await fallback_embed.edit_field(
+                                            index=0, 
+                                            name="目前狀態", 
+                                            value=f"正在本地提取影片串流中 (已耗時 {elapsed} 秒)..."
+                                        )
+                                        await status_msg.edit(embed=fallback_embed)
+                                    except Exception:
+                                        pass
+                                        
+                            download_task = asyncio.create_task(update_download_progress())
+                            try:
+                                await process.wait()
+                            finally:
+                                download_task.cancel()
                             
                             if not os.path.exists(output_filename) or os.path.getsize(output_filename) == 0:
                                 raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
@@ -437,6 +470,9 @@ async def analyze(
         )
         await interaction.followup.send(embed=error_embed)
         return
+    finally:
+        api_done.set()
+        progress_task.cancel()
 
     # 4. 分析成功，處理結果
     video_title = result.get("video_title", "未知的影片")
@@ -444,12 +480,12 @@ async def analyze(
     wipes = result.get("wipes", [])
     
     success_embed = discord.Embed(
-        title="✅ 影像分析成功！",
-        description=f"影片 **{video_title}** 分析已順利完成。",
+        title="分析完成",
+        description=f"影片 **{video_title}** 分析完成。",
         color=discord.Color.green()
     )
     success_embed.add_field(name="影片長度", value=format_time(video_duration), inline=True)
-    success_embed.add_field(name="辨識滅團總數", value=f"{len(wipes)} 次", inline=True)
+    success_embed.add_field(name="Wipe數:", value=f"{len(wipes)} 次", inline=True)
     
     # 在 Embed 中列出簡要的時間點列表 (前 10 次，若太多以防溢出)
     if wipes:
@@ -457,14 +493,14 @@ async def analyze(
         for w in wipes[:10]:
             time_str = format_time(w.get("black_screen_start"))
             score = w.get("similarity_score", 0.0)
-            wipes_summary.append(f"• **滅團 #{w.get('wipe_number')}**: `{time_str}` (相似度: {score:.2f})")
+            wipes_summary.append(f"• **Wipe #{w.get('wipe_number')}**: `{time_str}` (相似度: {score:.2f})")
             
         if len(wipes) > 10:
-            wipes_summary.append(f"*...以及其餘 {len(wipes) - 10} 次滅團記錄*")
+            wipes_summary.append(f"*...以及其餘 {len(wipes) - 10} 次Wipe*")
             
-        success_embed.add_field(name="滅團時間點摘要", value="\n".join(wipes_summary), inline=False)
+        success_embed.add_field(name="Wipe時間點摘要", value="\n".join(wipes_summary), inline=False)
     else:
-        success_embed.add_field(name="偵測結果", value="未偵測到任何滅團 (Wipe) 影格。", inline=False)
+        success_embed.add_field(name="偵測結果", value="未偵測到任何Wipe影格。", inline=False)
         
     # 掛載按鈕元件 (TimelineView)
     view = TimelineView(wipes, video_title, video_duration)

@@ -81,6 +81,7 @@ jobs:
               --restart unless-stopped \
               --network host \
               --env-file .env \
+              $COOKIE_MOUNT \
               ghcr.io/${REPO_LOWER}:latest \
               python discord_bot.py
               
