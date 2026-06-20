@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.24"
+VERSION = "v0.0.25"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -740,13 +740,14 @@ def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) ->
         }
     }
     
-    # 階段一選項：帶 Cookie，使用預設客戶端以獲取最完整的影音格式支援，不帶代理 (直連)
+    # 階段一選項：帶 Cookie，使用與階段二相同的 ios/android 客戶端以確保取得穩定的 m3u8 格式，防止 Requested format is not available 錯誤
     ydl_opts_with_cookie = {
         'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
         'quiet': True,
         'no_warnings': True,
         'extractor_args': {
             'youtube': {
+                'client': ['ios', 'android'],
                 'construct_dash': False
             }
         }
@@ -1173,12 +1174,6 @@ async def analyze_video(request: AnalyzeRequest):
             duration = video_info['duration']
             title = video_info['title']
         finally:
-            # 確保清理臨時 Cookie 檔
-            if cookies_path and os.path.exists(cookies_path):
-                try:
-                    os.remove(cookies_path)
-                except Exception:
-                    pass
             # 確保清理 GCS 下載到 /tmp 的臨時模板圖片
             if gcs_bucket and template_path.startswith("/tmp") and os.path.exists(template_path):
                 try:
@@ -1273,13 +1268,20 @@ async def analyze_video(request: AnalyzeRequest):
             wipes=wipes
         )
     finally:
-        # 確保清理臨時下載的影片檔
+        # 確保清理本地臨時影片檔
         if temp_video_path and os.path.exists(temp_video_path):
             try:
                 os.remove(temp_video_path)
                 print("成功清理本地臨時影片檔。")
             except Exception as e_clean:
                 print(f"清理本地臨時影片檔失敗: {e_clean}")
+        # 確保清理臨時 Cookie 檔
+        if cookies_path and os.path.exists(cookies_path):
+            try:
+                os.remove(cookies_path)
+                print("成功清理臨時 Cookie 檔。")
+            except Exception as e_clean:
+                print(f"清理臨時 Cookie 檔失敗: {e_clean}")
 
 if __name__ == "__main__":
     import uvicorn

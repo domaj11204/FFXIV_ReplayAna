@@ -208,9 +208,9 @@ async def analyze(
                 'extract_flat': True,
             }
             if os.path.exists("www.youtube.com_cookies.txt"):
-                ydl_opts["cookies"] = "www.youtube.com_cookies.txt"
+                ydl_opts["cookiefile"] = "www.youtube.com_cookies.txt"
             elif os.path.exists("cookies.txt"):
-                ydl_opts["cookies"] = "cookies.txt"
+                ydl_opts["cookiefile"] = "cookies.txt"
             with YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(youtube_url, download=False)
         
