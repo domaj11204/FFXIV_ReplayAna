@@ -35,6 +35,24 @@ def test_analyze():
     debug_input = input("是否啟用除錯模式以保留 Wipe 判斷圖片? (y/N): ").strip().lower()
     debug_mode = debug_input in ("y", "yes")
 
+    # 詢問是否自訂掃描區間
+    custom_range = input("是否設定自訂掃描時間區間? (y/N) [預設: No]: ").strip().lower()
+    scan_start_offset = 0.0
+    scan_duration_limit = 0.0
+    if custom_range in ("y", "yes"):
+        try:
+            start_in = input("請輸入掃描起始偏移秒數 (秒) [預設 0.0]: ").strip()
+            if start_in:
+                scan_start_offset = float(start_in)
+            limit_in = input("請輸入掃描長度限制 (秒，0.0 為不限制) [預設 0.0]: ").strip()
+            if limit_in:
+                scan_duration_limit = float(limit_in)
+        except ValueError:
+            print("輸入格式錯誤，將使用預設區間。")
+    else:
+        # 預設維持原本的前 10 分鐘限制以節省時間
+        scan_duration_limit = 600.0
+
     # 詢問是否自訂黑屏偵測閥值 (便於本地除錯)
     custom_black = input("是否設定自訂的黑屏偵測參數? (y/N) [預設: No]: ").strip().lower()
     black_pix_th = None
@@ -59,7 +77,8 @@ def test_analyze():
         "x_max": 0.70,
         "y_min": 0.25,
         "y_max": 0.50,
-        "scan_duration_limit": 600.0,  # 測試時限制僅分析前 10 分鐘，節省時間
+        "scan_start_offset": scan_start_offset,
+        "scan_duration_limit": scan_duration_limit,
         "debug": debug_mode
     }
     if black_pix_th is not None:

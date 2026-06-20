@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.36"
+VERSION = "v0.0.37"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -675,6 +675,7 @@ class AnalyzeRequest(BaseModel):
     y_max: float = Field(0.50, ge=0.0, le=1.0, description="偵測區域下邊界比例 (0.0~1.0)")
     threshold: float = Field(0.65, ge=0.0, le=1.0, description="RESTART 模板比對相似度閾值")
     scan_duration_limit: float = Field(0.0, description="限制掃描影片的前 N 秒，0.0 表示不限制")
+    scan_start_offset: float = Field(0.0, description="限制掃描的起始時間 (秒)，預設為 0.0")
     cookies_content: str | None = Field(None, description="YouTube Cookie 檔案內容，用以避免 YouTube Bot 阻擋驗證")
     video_title: str | None = Field(None, description="可選的影片標題，若提供則優先使用")
     video_duration: float | None = Field(None, description="可選的影片長度 (秒)，若提供則優先使用")
@@ -847,8 +848,10 @@ def run_black_detection(
     is_network = stream_url.startswith("http://") or stream_url.startswith("https://")
     cmd = [
         'ffmpeg',
-        '-loglevel', 'warning',
+        '-loglevel', 'info',
     ]
+    if req.scan_start_offset > 0.0:
+        cmd.extend(['-ss', str(req.scan_start_offset)])
     if is_network:
         cmd.extend([
             '-reconnect', '1',
@@ -933,6 +936,11 @@ def run_black_detection(
                 start = float(match.group(1))
                 end = float(match.group(2))
                 duration = float(match.group(3))
+                
+                # 自動判斷時間戳是否被 FFmpeg 重置為從 0 開始
+                if req.scan_start_offset > 0.0 and start < req.scan_start_offset:
+                    start += req.scan_start_offset
+                    end += req.scan_start_offset
                 
                 # FFXIV 的滅團黑屏一般落在 4~10 秒之間，因此過濾過長或過短的黑屏以防誤判
                 if actual_min_duration <= duration <= 12.0:
@@ -1281,7 +1289,7 @@ async def analyze_video(request: AnalyzeRequest):
             
             # 使用與解析相同的 ydl_opts 下載影片
             ydl_opts_download = {
-                'format': 'bestvideo[height<=360][fps<=30][protocol*=m3u8]/best[height<=360][fps<=30][protocol*=m3u8]/bestvideo[height<=360][fps<=30][protocol!*=dash]/worstvideo/worst',
+                'format': 'bestvideo[height<=360][fps<=15][protocol*=m3u8]/bestvideo[height<=360][fps<=30][protocol*=m3u8]/best[height<=360][fps<=15][protocol*=m3u8]/best[height<=360][fps<=30][protocol*=m3u8]/bestvideo[height<=360][fps<=15][protocol!*=dash]/bestvideo[height<=360][fps<=30][protocol!*=dash]/worstvideo/worst',
                 'quiet': True,
                 'no_warnings': True,
                 'outtmpl': temp_video_path,
