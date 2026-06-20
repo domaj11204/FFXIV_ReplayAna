@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.26"
+VERSION = "v0.0.27"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1201,7 +1201,13 @@ async def analyze_video(request: AnalyzeRequest):
                 'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
                 'quiet': True,
                 'no_warnings': True,
-                'outtmpl': temp_video_path
+                'outtmpl': temp_video_path,
+                'extractor_args': {
+                    'youtube': {
+                        'client': ['ios', 'android'],
+                        'construct_dash': False
+                    }
+                }
             }
             if cookies_path:
                 ydl_opts_download['cookiefile'] = cookies_path
