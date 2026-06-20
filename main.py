@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.37"
+VERSION = "v0.0.39"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -686,7 +686,7 @@ class AnalyzeRequest(BaseModel):
     scan_duration_limit: float = Field(0.0, description="限制掃描影片的前 N 秒，0.0 表示不限制")
     scan_start_offset: float = Field(0.0, description="限制掃描的起始時間 (秒)，預設為 0.0")
     cookies_content: str | None = Field(None, description="YouTube Cookie 檔案內容，用以避免 YouTube Bot 阻擋驗證")
-    game_language: str = Field("ja", description="遊戲用戶端語言，支援 'ja' (日文) 與 'en' (英文)")
+    game_language: str = Field("auto", description="遊戲用戶端語言，支援 'auto' (自動)、'ja' (日文) 與 'en' (英文)")
     video_title: str | None = Field(None, description="可選的影片標題，若提供則優先使用")
     video_duration: float | None = Field(None, description="可選的影片長度 (秒)，若提供則優先使用")
     debug: bool | None = Field(None, description="是否啟用除錯模式，保留 Wipe 判斷過程的圖片與日誌")
@@ -1173,27 +1173,32 @@ async def analyze_video(request: AnalyzeRequest):
     except Exception as e:
         print(f"未偵測到 Node.js 執行環境: {e}")
 
-    # 1. 取得並驗證模板圖片 (依據指定語言載入 ja 或 en 的預設模板)
-    if request.game_language == "en" and request.template_name == "restart_template.png":
-        template_path = "forward_template.png"
-    else:
-        template_path = request.template_name
     gcs_bucket = os.environ.get("GCS_BUCKET_NAME")
-    
-    # 如果本地找不到模板，且有配置 GCS_BUCKET_NAME，嘗試從 GCS 下載至 /tmp
-    if not os.path.exists(template_path):
-        if gcs_bucket:
-            temp_path = os.path.join("/tmp", template_path)
-            print(f"本地找不到模板 [{template_path}]，嘗試自 GCS Bucket [{gcs_bucket}] 下載...")
-            if download_from_gcs(gcs_bucket, template_path, temp_path):
-                template_path = temp_path
 
-    if not os.path.exists(template_path):
-        raise HTTPException(status_code=404, detail=f"找不到指定的模板圖片: {template_path}，本地或 GCS 均無此檔案。")
+    def load_template_image(lang: str, template_name: str):
+        if lang == "en" and template_name == "restart_template.png":
+            template_path = "forward_template.png"
+        else:
+            template_path = template_name
         
-    template_img = cv2.imread(template_path)
-    if template_img is None:
-        raise HTTPException(status_code=400, detail=f"無法成功解碼圖片檔案: {template_path}")
+        if not os.path.exists(template_path):
+            if gcs_bucket:
+                temp_path = os.path.join("/tmp", template_path)
+                print(f"本地找不到模板 [{template_path}]，嘗試自 GCS Bucket [{gcs_bucket}] 下載...")
+                if download_from_gcs(gcs_bucket, template_path, temp_path):
+                    template_path = temp_path
+
+        if not os.path.exists(template_path):
+            raise HTTPException(status_code=404, detail=f"找不到指定的模板圖片: {template_path}，本地或 GCS 均無此檔案。")
+            
+        tpl_img = cv2.imread(template_path)
+        if tpl_img is None:
+            raise HTTPException(status_code=400, detail=f"無法成功解碼圖片檔案: {template_path}")
+        return tpl_img
+
+    # 1. 取得並驗證模板圖片 (依據指定語言載入 ja 或 en 的預設模板)
+    first_lang = "ja" if request.game_language == "auto" else request.game_language
+    template_img = load_template_image(first_lang, request.template_name)
         
     # 處理動態傳入的 Cookie
     cookies_path = None
@@ -1366,36 +1371,48 @@ async def analyze_video(request: AnalyzeRequest):
         print(f"共偵測到 {len(black_intervals)} 個潛在黑屏區間。")
         
         # 4. 第二階段：對每個黑屏後區間進行 RESTART 文字驗證
-        wipes = []
-        wipe_count = 0
-        
-        for idx, interval in enumerate(black_intervals):
-            black_end = interval['end']
-            print(f"[{idx+1}/{len(black_intervals)}] 正在驗證時間點 {black_end}s 後的畫面...")
-            
-            match_found, detected_at, score = verify_restart_text(
-                stream_url=stream_url,
-                video_w=video_w,
-                video_h=video_h,
-                start_time=black_end,
-                template_img=template_img,
-                req=request,
-                is_debug=is_debug
-            )
-            
-            if match_found:
-                wipe_count += 1
-                wipes.append(WipeEvent(
-                    wipe_number=wipe_count,
-                    black_screen_start=interval['start'],
-                    black_screen_end=interval['end'],
-                    restart_word_detected_at=detected_at,
-                    similarity_score=float(score)
-                ))
-                print(f"-> 偵測到 Wipe #{wipe_count}！時間: {detected_at}s (相似度: {score:.2f})")
-            else:
-                print(f"-> 驗證未通過，最高相似度為: {score:.2f}")
+        def run_verification(tpl_img, lang_code):
+            results = []
+            local_wipe_count = 0
+            for idx, interval in enumerate(black_intervals):
+                black_end = interval['end']
+                print(f"[{idx+1}/{len(black_intervals)}] 正在驗證時間點 {black_end}s 後的畫面 (語言: {lang_code})...")
                 
+                match_found, detected_at, score = verify_restart_text(
+                    stream_url=stream_url,
+                    video_w=video_w,
+                    video_h=video_h,
+                    start_time=black_end,
+                    template_img=tpl_img,
+                    req=request,
+                    is_debug=is_debug
+                )
+                
+                if match_found:
+                    local_wipe_count += 1
+                    results.append(WipeEvent(
+                        wipe_number=local_wipe_count,
+                        black_screen_start=interval['start'],
+                        black_screen_end=interval['end'],
+                        restart_word_detected_at=detected_at,
+                        similarity_score=float(score)
+                    ))
+                    print(f"-> 偵測到 Wipe #{local_wipe_count}！時間: {detected_at}s (相似度: {score:.2f})")
+                else:
+                    print(f"-> 驗證未通過，最高相似度為: {score:.2f}")
+            return results
+
+        wipes = run_verification(template_img, first_lang)
+        
+        # 如果第一輪比對為空，且有偵測到黑屏區間，且設定為 auto，則自動切換至英文模板進行比對
+        if request.game_language == "auto" and len(black_intervals) > 0 and len(wipes) == 0:
+            print("偵測到黑屏區間但未匹配到日文 Wipe，自動切換至英文模板進行第二輪比對...")
+            try:
+                en_template_img = load_template_image("en", request.template_name)
+                wipes = run_verification(en_template_img, "en")
+            except Exception as e_retry:
+                print(f"自動切換英文模板比對失敗: {e_retry}")
+
         return AnalyzeResponse(
             status="success",
             video_title=title,
