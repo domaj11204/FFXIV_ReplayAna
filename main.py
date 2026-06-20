@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.22"
+VERSION = "v0.0.23"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -813,15 +813,21 @@ def run_black_detection(
     crop_w = (crop_w // 2) * 2
     crop_h = (crop_h // 2) * 2
 
+    is_network = stream_url.startswith("http://") or stream_url.startswith("https://")
     cmd = [
         'ffmpeg',
         '-loglevel', 'warning',
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-rw_timeout', '15000000',
-        '-i', stream_url,
     ]
+    if is_network:
+        cmd.extend([
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-rw_timeout', '15000000',
+        ])
+    cmd.extend([
+        '-i', stream_url,
+    ])
     if req.scan_duration_limit > 0.0:
         cmd.extend(['-t', str(req.scan_duration_limit)])
     cmd.extend([
@@ -950,14 +956,20 @@ def verify_restart_text(
     scales = [0.9, 1.0, 1.1]
     
     # 使用 FFmpeg 只讀取特定時間段 [start_time, start_time + 30]，每秒 1 幀，並自動裁切
+    is_network = stream_url.startswith("http://") or stream_url.startswith("https://")
     ffmpeg_cmd = [
         'ffmpeg',
         '-loglevel', 'error', # 減少 stderr 的輸出量，防微杜漸
         '-ss', str(start_time),
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-rw_timeout', '10000000', # 10秒 rw_timeout
+    ]
+    if is_network:
+        ffmpeg_cmd.extend([
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-rw_timeout', '10000000', # 10秒 rw_timeout
+        ])
+    ffmpeg_cmd.extend([
         '-i', stream_url,
         '-t', '30',
         '-filter:v', f'crop={crop_w}:{crop_h}:{crop_x}:{crop_y},fps=1',
@@ -965,7 +977,7 @@ def verify_restart_text(
         '-vcodec', 'rawvideo',
         '-pix_fmt', 'bgr24',
         'pipe:1'
-    ]
+    ])
     
     frame_size = crop_w * crop_h * 3
     env = os.environ.copy()

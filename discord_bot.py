@@ -287,6 +287,10 @@ async def analyze(
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(CLOUD_RUN_URL, json=payload, headers=headers) as response:
                 if response.status != 200:
+                    # 立即停止進度計時更新，防範 Embed 被舊進度蓋掉
+                    api_done.set()
+                    progress_task.cancel()
+                    
                     err_body = await response.text()
                     try:
                         err_json = json.loads(err_body)
@@ -294,9 +298,9 @@ async def analyze(
                     except Exception:
                         err_detail = err_body
                         
-                    # 偵測是否被 YouTube Bot 檢測阻擋，若是則啟動 GCS 儲存桶橋接 Fallback 機制
+                    # 偵測是否被 YouTube Bot 檢測阻擋，且僅在指向雲端 Cloud Run 服務時才啟動 GCS Fallback 橋接（地端不需且無法使用此橋接）
                     # 排除影片本身正在轉檔的情況 (避免轉檔時本地也下載失敗且卡死)
-                    if "轉檔" not in err_detail and ("Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail or "黑屏偵測失敗" in err_detail or "Exit Code" in err_detail):
+                    if "run.app" in CLOUD_RUN_URL and "轉檔" not in err_detail and ("Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail or "黑屏偵測失敗" in err_detail or "Exit Code" in err_detail):
                         fallback_embed = discord.Embed(
                             title="啟動 GCS 儲存桶橋接機制...",
                             description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
@@ -468,7 +472,7 @@ async def analyze(
                                     if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
                                         client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
                                     else:
-                                        client = storage.Client()
+                                        return
                                     bucket = client.bucket(bucket_name)
                                     blob = bucket.blob(gcs_blob_name)
                                     if blob.exists():
@@ -489,10 +493,13 @@ async def analyze(
                             try:
                                 if gcs_blob_name:
                                     def delete_gcs():
-                                        if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
-                                            client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
-                                        else:
-                                            client = storage.Client()
+                                        try:
+                                            if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                                                client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
+                                            else:
+                                                return
+                                        except Exception:
+                                            return
                                         bucket = client.bucket(bucket_name)
                                         blob = bucket.blob(gcs_blob_name)
                                         if blob.exists():
