@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.34"
+VERSION = "v0.0.36"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1281,7 +1281,7 @@ async def analyze_video(request: AnalyzeRequest):
             
             # 使用與解析相同的 ydl_opts 下載影片
             ydl_opts_download = {
-                'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
+                'format': 'bestvideo[height<=360][fps<=30][protocol*=m3u8]/best[height<=360][fps<=30][protocol*=m3u8]/bestvideo[height<=360][fps<=30][protocol!*=dash]/worstvideo/worst',
                 'quiet': True,
                 'no_warnings': True,
                 'outtmpl': temp_video_path,
@@ -1382,13 +1382,16 @@ async def analyze_video(request: AnalyzeRequest):
             wipes=wipes
         )
     finally:
-        # 確保清理本地臨時影片檔
+        # 確保清理本地臨時影片檔 (除錯模式下保留以供診斷)
         if temp_video_path and os.path.exists(temp_video_path):
-            try:
-                os.remove(temp_video_path)
-                print("成功清理本地臨時影片檔。")
-            except Exception as e_clean:
-                print(f"清理本地臨時影片檔失敗: {e_clean}")
+            if is_debug:
+                print(f"[Debug] 除錯模式啟用，保留本地暫存影片檔：{temp_video_path}")
+            else:
+                try:
+                    os.remove(temp_video_path)
+                    print("成功清理本地臨時影片檔。")
+                except Exception as e_clean:
+                    print(f"清理本地臨時影片檔失敗: {e_clean}")
         # 確保清理臨時 Cookie 檔
         if cookies_path and os.path.exists(cookies_path):
             try:

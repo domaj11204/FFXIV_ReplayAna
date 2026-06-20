@@ -43,8 +43,8 @@ def main():
     print("===================================================")
     
     youtube_url = "https://www.youtube.com/live/TDh49Hc47Ss"
-    start_time = 3958.0  # 1:05:58
-    duration = 6.0       # 截取 6 秒 (到 1:06:04)
+    start_time = 1545.0  # 25:45
+    duration = 10.0      # 截取 10 秒 (到 25:55)
     fps = 5              # 每秒 5 幀
     
     # 讀取本地 Cookie

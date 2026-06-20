@@ -28,7 +28,7 @@ async def main():
         x_max=0.70,
         y_min=0.25,
         y_max=0.50,
-        scan_duration_limit=4100.0,  # 掃描前 4100 秒 (包含 3961s 的 Wipe 點)
+        scan_duration_limit=1560.0,  # 掃描前 26 分鐘 (包含 25:50 的 Wipe 點)
         debug=True,
         black_pix_th=0.15,
         black_duration=2.0
