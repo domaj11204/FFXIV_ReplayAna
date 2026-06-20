@@ -22,7 +22,7 @@ def main():
                 print(f"讀取 {path} 失敗: {e}")
 
     payload = {
-        "youtube_url": "https://www.youtube.com/watch?v=zG68yxff90s",
+        "youtube_url": "https://www.youtube.com/live/TDh49Hc47Ss",
         "template_name": "restart_template.png",
         "threshold": 0.65,
         "x_min": 0.30,

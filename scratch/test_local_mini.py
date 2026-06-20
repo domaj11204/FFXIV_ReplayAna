@@ -1,52 +1,47 @@
-import urllib.request
-import json
-import time
+import asyncio
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from main import analyze_video, AnalyzeRequest
 
-def main():
-    url = "http://100.103.205.10:8080/analyze"
-    # 使用之前已知的測試影片
-    youtube_url = "https://www.youtube.com/watch?v=zG68yxff90s"
+async def main():
+    print("=== 本地直接分析測試 (不透過 FastAPI) ===")
     
-    data = {
-        "youtube_url": youtube_url,
-        "template_name": "restart_template.png",
-        "threshold": 0.65,
-        "x_min": 0.30,
-        "x_max": 0.70,
-        "y_min": 0.25,
-        "y_max": 0.50,
-        "scan_duration_limit": 300  # 限制掃描前 300 秒加快速度
-    }
-    
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers=headers,
-        method="POST"
+    # 讀取本地 Cookie
+    cookies_content = None
+    cookie_paths = ["cookies.txt", "www.youtube.com_cookies.txt"]
+    for path in cookie_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    cookies_content = f.read()
+                    print(f"已讀取本地 Cookie: {path}")
+                    break
+            except Exception as e:
+                print(f"讀取 {path} 失敗: {e}")
+
+    req = AnalyzeRequest(
+        youtube_url="https://www.youtube.com/live/TDh49Hc47Ss",
+        template_name="restart_template.png",
+        threshold=0.65,
+        x_min=0.30,
+        x_max=0.70,
+        y_min=0.25,
+        y_max=0.50,
+        scan_duration_limit=4100.0,  # 掃描前 4100 秒 (包含 3961s 的 Wipe 點)
+        debug=True,
+        black_pix_th=0.15,
+        black_duration=2.0
     )
-    
+    if cookies_content:
+        req.cookies_content = cookies_content
+
     try:
-        print(f"正在向地端 API ({url}) 發送分析請求，影片: {youtube_url}...")
-        start = time.time()
-        with urllib.request.urlopen(req, timeout=120) as response:
-            res_body = response.read().decode("utf-8")
-            elapsed = time.time() - start
-            print(f"請求成功，總耗時: {elapsed:.2f} 秒")
-            result = json.loads(res_body)
-            print("分析結果:")
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-    except urllib.error.HTTPError as e:
-        print(f"HTTP 錯誤 ({e.code}): {e.reason}")
-        try:
-            print(e.read().decode("utf-8"))
-        except Exception:
-            pass
+        res = await analyze_video(req)
+        print("\n分析成功回傳！結果:")
+        print(res.model_dump_json(indent=2))
     except Exception as e:
-        print(f"發生未預期錯誤: {e}")
+        print(f"\n分析失敗並拋出異常: {e}")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

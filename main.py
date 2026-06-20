@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.33"
+VERSION = "v0.0.34"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1303,6 +1303,11 @@ async def analyze_video(request: AnalyzeRequest):
             if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
                 print("影片下載完成，切換分析路徑至本地檔案！")
                 stream_url = temp_video_path
+                # 重新讀取本地下載影片的真實解析度，防止解析度與直鏈不一致導致裁切偏離
+                local_info = get_local_video_info(stream_url)
+                video_w = local_info["width"]
+                video_h = local_info["height"]
+                print(f"本地暫存影片真實尺寸為: {video_w}x{video_h}")
             else:
                 print("影片下載失敗，退回流式解析模式。")
                 temp_video_path = None
