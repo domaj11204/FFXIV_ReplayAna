@@ -4,11 +4,12 @@ cd /d "%~dp0.."
 echo ===================================================
 echo   FFXIV Wipe Analyzer - Local Windows Backend
 echo ===================================================
-echo   正在使用 uv 啟動 FastAPI 本地後端服務...
+echo   Starting local FastAPI backend service with uv...
 echo ===================================================
 uv run uvicorn main:app --reload --port 8080
 if errorlevel 1 (
-    echo [ERROR] 啟動失敗，請確保已安裝 uv，且本機已安裝 ffmpeg。
+    echo [ERROR] Failed to start backend service.
+    echo Please make sure uv and ffmpeg are installed.
     pause
     exit /b 1
 )
