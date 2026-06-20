@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.32"
+VERSION = "v0.0.33"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -824,7 +824,7 @@ def run_black_detection(
     video_h: int,
     req: AnalyzeRequest,
     duration: float = 0.0,
-    min_duration: float = 3.0,
+    min_duration: float = 2.0,
     pix_th: float = 0.15
 ) -> list[dict]:
     """
@@ -935,7 +935,7 @@ def run_black_detection(
                 duration = float(match.group(3))
                 
                 # FFXIV 的滅團黑屏一般落在 4~10 秒之間，因此過濾過長或過短的黑屏以防誤判
-                if 3.0 <= duration <= 12.0:
+                if actual_min_duration <= duration <= 12.0:
                     black_intervals.append({
                         'start': start,
                         'end': end,
