@@ -148,7 +148,7 @@ Discord 指令 `/analyze` 參數：
 docker build -t ffxiv-replay-ana .
 ```
 
-### 2. 運行容器
+### 2. 運行容器 (單獨啟動)
 * **方案 A：GCS 整合模式** (自動下載 GCS 的 cookies.txt 與模板，需掛載 GCP 金鑰)：
   ```bash
   docker run -d -p 8080:8080 \
@@ -167,6 +167,33 @@ docker build -t ffxiv-replay-ana .
     --name ffxiv-analyzer \
     ffxiv-replay-ana
   ```
+
+### 3. 一鍵在本機 Docker 同時啟動後端與 Discord Bot (推薦)
+為簡化本地部署與測試，專案提供了專屬的 Docker 啟動指令檔（支援 Windows CMD 與 Linux/Git Bash），會自動安全地載入 `.env` 環境變數、建立 Docker 內部網路 `ffxiv-net`，並將後端與 Bot 容器安全串接通訊，免去設定外部代理解析或手動組裝指令。
+
+* **Windows CMD**:
+  ```cmd
+  # 在 CMD 中執行以查看互動式選單：
+  run\run.bat
+  
+  # 或直接指定動作：
+  run\run.bat start
+  ```
+* **Linux / WSL / Git Bash**:
+  ```bash
+  # 給予執行權限：
+  chmod +x run/run.sh
+  
+  # 執行以查看互動式選單：
+  ./run/run.sh
+  
+  # 或直接指定動作：
+  ./run/run.sh start
+  ```
+
+> [!NOTE]
+> 腳本可用指令包含：`build`, `start`, `stop`, `restart`, `status`, `logs [backend|bot]`。
+> 啟動後，API 分析後端會映射至主機 `http://localhost:8080`，Bot 容器則直接利用 Docker 內部 DNS 對應後端進行分析請求，不對外暴露 Bot 容器本身。
 
 ---
 
@@ -196,6 +223,9 @@ docker build -t ffxiv-replay-ana .
 ---
 
 ## 更新日誌 (Change Log)
+
+### v0.0.22
+- 先下載後分析優化：針對 YouTube 影片引入「本地下載後分析」高速模式。利用 `yt-dlp` 地端下載優化（避開 YouTube 的 HTTP 傳輸限速），將低畫質影片高速下載至暫存區，再傳遞給 `FFmpeg` 進行本地零延遲分析。成功將分析倍速自原先 HTTP 網路串流的 **`3.78x`** 飆升至 **`150x ~ 300x`**（提升約 40 倍），且內建下載失敗自動退回流式解析與 `finally` 暫存檔安全清理機制。
 
 ### v0.0.21
 - 動態超時控制：根據影片長度動態調整第一階段 FFmpeg 偵測的超時設定，解決 3 小時以上長影片超時被誤殺 (code: -9) 的問題。

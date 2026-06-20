@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.21"
+VERSION = "v0.0.22"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1176,53 +1176,98 @@ async def analyze_video(request: AnalyzeRequest):
     
     print(f"解析成功！標題: {title}，時長: {duration}秒，解析度: {video_w}x{video_h}")
     
-    # 3. 第一階段：快速全黑偵測 (FFmpeg blackdetect)
-    print("開始執行全黑影格偵測...")
-    black_intervals = run_black_detection(
-        stream_url=stream_url,
-        video_w=video_w,
-        video_h=video_h,
-        req=request,
-        duration=duration
-    )
-    print(f"共偵測到 {len(black_intervals)} 個潛在黑屏區間。")
-    
-    # 4. 第二階段：對每個黑屏後區間進行 RESTART 文字驗證
-    wipes = []
-    wipe_count = 0
-    
-    for idx, interval in enumerate(black_intervals):
-        black_end = interval['end']
-        print(f"[{idx+1}/{len(black_intervals)}] 正在驗證時間點 {black_end}s 後的畫面...")
-        
-        match_found, detected_at, score = verify_restart_text(
+    # 建立臨時影片下載機制 (僅針對 YouTube 影片)
+    temp_video_path = None
+    if not request.youtube_url.startswith("gs://") and not is_direct_stream_url(request.youtube_url):
+        try:
+            print("正在下載 YouTube 影片至本地以進行高速分析...")
+            import tempfile
+            import time as py_time
+            temp_dir = tempfile.gettempdir()
+            temp_file_name = f"ffxiv_ana_temp_{int(py_time.time())}.mp4"
+            temp_video_path = os.path.join(temp_dir, temp_file_name)
+            
+            # 使用與解析相同的 ydl_opts 下載影片
+            ydl_opts_download = {
+                'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
+                'quiet': True,
+                'no_warnings': True,
+                'outtmpl': temp_video_path
+            }
+            if cookies_path:
+                ydl_opts_download['cookiefile'] = cookies_path
+            elif os.path.exists("cookies.txt"):
+                ydl_opts_download['cookiefile'] = "cookies.txt"
+                
+            with YoutubeDL(ydl_opts_download) as ydl:
+                ydl.download([request.youtube_url])
+                
+            if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
+                print("影片下載完成，切換分析路徑至本地檔案！")
+                stream_url = temp_video_path
+            else:
+                print("影片下載失敗，退回流式解析模式。")
+                temp_video_path = None
+        except Exception as e_dl:
+            print(f"本地下載嘗試失敗 ({e_dl})，退回流式解析模式。")
+            temp_video_path = None
+
+    try:
+        # 3. 第一階段：快速全黑偵測 (FFmpeg blackdetect)
+        print("開始執行全黑影格偵測...")
+        black_intervals = run_black_detection(
             stream_url=stream_url,
             video_w=video_w,
             video_h=video_h,
-            start_time=black_end,
-            template_img=template_img,
-            req=request
+            req=request,
+            duration=duration
         )
+        print(f"共偵測到 {len(black_intervals)} 個潛在黑屏區間。")
         
-        if match_found:
-            wipe_count += 1
-            wipes.append(WipeEvent(
-                wipe_number=wipe_count,
-                black_screen_start=interval['start'],
-                black_screen_end=interval['end'],
-                restart_word_detected_at=detected_at,
-                similarity_score=float(score)
-            ))
-            print(f"-> 偵測到 Wipe #{wipe_count}！時間: {detected_at}s (相似度: {score:.2f})")
-        else:
-            print(f"-> 驗證未通過，最高相似度為: {score:.2f}")
+        # 4. 第二階段：對每個黑屏後區間進行 RESTART 文字驗證
+        wipes = []
+        wipe_count = 0
+        
+        for idx, interval in enumerate(black_intervals):
+            black_end = interval['end']
+            print(f"[{idx+1}/{len(black_intervals)}] 正在驗證時間點 {black_end}s 後的畫面...")
             
-    return AnalyzeResponse(
-        status="success",
-        video_title=title,
-        video_duration_seconds=duration,
-        wipes=wipes
-    )
+            match_found, detected_at, score = verify_restart_text(
+                stream_url=stream_url,
+                video_w=video_w,
+                video_h=video_h,
+                start_time=black_end,
+                template_img=template_img,
+                req=request
+            )
+            
+            if match_found:
+                wipe_count += 1
+                wipes.append(WipeEvent(
+                    wipe_number=wipe_count,
+                    black_screen_start=interval['start'],
+                    black_screen_end=interval['end'],
+                    restart_word_detected_at=detected_at,
+                    similarity_score=float(score)
+                ))
+                print(f"-> 偵測到 Wipe #{wipe_count}！時間: {detected_at}s (相似度: {score:.2f})")
+            else:
+                print(f"-> 驗證未通過，最高相似度為: {score:.2f}")
+                
+        return AnalyzeResponse(
+            status="success",
+            video_title=title,
+            video_duration_seconds=duration,
+            wipes=wipes
+        )
+    finally:
+        # 確保清理臨時下載的影片檔
+        if temp_video_path and os.path.exists(temp_video_path):
+            try:
+                os.remove(temp_video_path)
+                print("成功清理本地臨時影片檔。")
+            except Exception as e_clean:
+                print(f"清理本地臨時影片檔失敗: {e_clean}")
 
 if __name__ == "__main__":
     import uvicorn
