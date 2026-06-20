@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.30"
+VERSION = "v0.0.31"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -51,6 +51,27 @@ def download_from_gcs(bucket_name: str, blob_name: str, dest_path: str) -> bool:
     except Exception as e:
         print(f"自 GCS 下載資源 [{blob_name}] 失敗: {str(e)}")
         return False
+
+def get_local_video_info(file_path: str) -> dict:
+    """
+    使用 OpenCV 快速讀取本地影片的解析度與時長。
+    """
+    import cv2
+    cap = cv2.VideoCapture(file_path)
+    if not cap.isOpened():
+        return {"width": 640, "height": 360, "duration": 0.0}
+    
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    
+    duration = 0.0
+    if fps > 0:
+        duration = frame_count / fps
+        
+    cap.release()
+    return {"width": width, "height": height, "duration": duration}
 
 def is_direct_stream_url(url: str) -> bool:
     """
@@ -655,6 +676,8 @@ class AnalyzeRequest(BaseModel):
     threshold: float = Field(0.65, ge=0.0, le=1.0, description="RESTART 模板比對相似度閾值")
     scan_duration_limit: float = Field(0.0, description="限制掃描影片的前 N 秒，0.0 表示不限制")
     cookies_content: str | None = Field(None, description="YouTube Cookie 檔案內容，用以避免 YouTube Bot 阻擋驗證")
+    video_title: str | None = Field(None, description="可選的影片標題，若提供則優先使用")
+    video_duration: float | None = Field(None, description="可選的影片長度 (秒)，若提供則優先使用")
 
 # 單個 Wipe 事件的輸出模型
 class WipeEvent(BaseModel):
@@ -1163,10 +1186,24 @@ async def analyze_video(request: AnalyzeRequest):
     elif is_direct_stream_url(request.youtube_url):
         print("偵測到傳入的已是視訊直鏈，跳過 yt-dlp 解析步驟。")
         stream_url = request.youtube_url
-        video_w = 640
-        video_h = 360
-        duration = 0.0
-        title = "Direct Video Stream"
+        if os.path.exists(stream_url):
+            info = get_local_video_info(stream_url)
+            video_w = info["width"]
+            video_h = info["height"]
+            duration = info["duration"]
+            title = os.path.basename(stream_url)
+            print(f"成功自本地影片獲取屬性: 時長: {duration}秒, 解析度: {video_w}x{video_h}")
+        else:
+            video_w = 640
+            video_h = 360
+            duration = 0.0
+            title = "Direct Video Stream"
+            
+        if request.video_title:
+            title = request.video_title
+        if request.video_duration is not None and request.video_duration > 0.0:
+            duration = request.video_duration
+            
         if gcs_bucket and template_path.startswith("/tmp") and os.path.exists(template_path):
             try:
                 os.remove(template_path)

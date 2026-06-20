@@ -309,7 +309,9 @@ async def analyze(
         "x_max": x_max,
         "y_min": y_min,
         "y_max": y_max,
-        "scan_duration_limit": scan_duration_limit
+        "scan_duration_limit": scan_duration_limit,
+        "video_title": video_title,
+        "video_duration": video_duration
     }
     if cookies_content:
         payload["cookies_content"] = cookies_content
