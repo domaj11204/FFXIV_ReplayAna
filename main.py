@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.39"
+VERSION = "v0.0.40"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -435,15 +435,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <input type="number" id="threshold" value="0.65" min="0.1" max="1.0" step="0.05">
                 </div>
                 <div class="setting-item">
-                    <label for="scan-limit">限制掃描前 N 秒 (0無限制)</label>
-                    <input type="number" id="scan-limit" value="0" min="0">
-                </div>
-                <div class="setting-item">
                     <label for="game-language">遊戲用戶端語言</label>
                     <select id="game-language" style="width: 100%; padding: 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: var(--text-color); outline: none;">
+                        <option value="auto" selected>自動判定 (Auto)</option>
                         <option value="ja">日文 (RESTART)</option>
                         <option value="en">英文 (FORWARD!)</option>
                     </select>
+                </div>
+                <div class="setting-item">
+                    <label for="scan-offset">掃描起始偏移 (秒)</label>
+                    <input type="number" id="scan-offset" value="0" min="0">
+                </div>
+                <div class="setting-item">
+                    <label for="scan-limit">掃描長度限制 (秒，0無限制)</label>
+                    <input type="number" id="scan-limit" value="0" min="0">
                 </div>
             </div>
             
@@ -482,6 +487,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const urlInput = document.getElementById('video-url');
         const thresholdInput = document.getElementById('threshold');
         const scanLimitInput = document.getElementById('scan-limit');
+        const scanOffsetInput = document.getElementById('scan-offset');
         const gameLanguageInput = document.getElementById('game-language');
         
         const statusBox = document.getElementById('status-box');
@@ -546,6 +552,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     body: JSON.stringify({
                         youtube_url: url,
                         threshold: parseFloat(thresholdInput.value),
+                        scan_start_offset: parseFloat(scanOffsetInput.value),
                         scan_duration_limit: parseFloat(scanLimitInput.value),
                         game_language: gameLanguageInput.value,
                         template_name: "restart_template.png",
