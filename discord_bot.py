@@ -603,16 +603,72 @@ async def update_cookies(interaction: discord.Interaction, cookie_file: discord.
     await interaction.response.defer(ephemeral=True)
     
     try:
-        # 1. 讀取附件內容
+        # 1. 讀取附件內容並進行健全解碼 (防範 UTF-8 BOM, UTF-16 等編碼問題)
         content_bytes = await cookie_file.read()
-        content_str = content_bytes.decode("utf-8", errors="ignore")
+        content_str = None
+        for enc in ["utf-8-sig", "utf-16", "big5", "utf-8"]:
+            try:
+                decoded = content_bytes.decode(enc)
+                if "youtube.com" in decoded or "# Netscape" in decoded:
+                    content_str = decoded
+                    print(f"成功使用 {enc} 編碼解碼上傳的 Cookie 檔案。")
+                    break
+            except Exception:
+                continue
+                
+        if not content_str:
+            try:
+                content_str = content_bytes.decode("utf-8", errors="ignore")
+            except Exception:
+                await interaction.followup.send("錯誤：無法成功解碼上傳的檔案，請確保其為純文字 .txt 格式。", ephemeral=True)
+                return
         
         # 2. 檢查是否具有 YouTube Cookie 的基本特徵，確保沒上傳錯檔案
         if "youtube.com" not in content_str:
             await interaction.followup.send("警告：上傳的檔案內容看起來不包含 youtube.com 的 Cookie 資料，請確認您使用的是有效的 cookies.txt 檔案。", ephemeral=True)
             return
             
-        # 3. 優先寫入本地 cookies 檔案
+        # 3. 實時驗證 Cookie
+        def verify_cookie():
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".txt", encoding="utf-8") as tf:
+                tf.write(content_str)
+                temp_path = tf.name
+            
+            ydl_opts = {
+                "quiet": True,
+                "skip_download": True,
+                "extract_flat": True,
+                "cookiefile": temp_path,
+                "extractor_args": {
+                    "youtube": {
+                        "client": ["ios", "android"],
+                        "construct_dash": False
+                    }
+                }
+            }
+            try:
+                with YoutubeDL(ydl_opts) as ydl:
+                    ydl.extract_info("https://www.youtube.com/watch?v=zG68yxff90s", download=False)
+                return True, ""
+            except Exception as e:
+                return False, str(e)
+            finally:
+                try:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                except Exception:
+                    pass
+
+        cookie_valid, cookie_err = await asyncio.to_thread(verify_cookie)
+        if not cookie_valid:
+            warn_msg = "上傳的 Cookie 檔案驗證失敗（可能已過期或被瀏覽器安全性輪替而失效）。請重新在瀏覽器中保持登入狀態並導出有效的 cookies.txt 後上傳。"
+            if "confirm you" in cookie_err.lower() or "bot" in cookie_err.lower():
+                warn_msg = "上傳的 Cookie 驗證失敗，YouTube 依然判定為 Bot（請重新導出有效的 Cookie 檔案上傳，並確認不要在導出後登出帳號或清除瀏覽器記錄）。"
+            await interaction.followup.send(f"警告：{warn_msg}\n\n詳細錯誤原因：\n`{cookie_err}`", ephemeral=True)
+            return
+
+        # 4. 優先寫入本地 cookies 檔案
         def save_local_cookies():
             with open("cookies.txt", "w", encoding="utf-8") as f:
                 f.write(content_str)
