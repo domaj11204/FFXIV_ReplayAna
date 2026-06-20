@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.25"
+VERSION = "v0.0.26"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -843,6 +843,7 @@ def run_black_detection(
     if "http_proxy" in env: del env["http_proxy"]
     if "https_proxy" in env: del env["https_proxy"]
     import threading
+    print(f"[run_black_detection] 啟動 FFmpeg 命令: {' '.join(cmd)}")
     process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore', env=env)
     
     # 估算超時秒數：基礎 180 秒，每 1 小時 (3600 秒) 影片額外給予 120 秒
@@ -874,6 +875,7 @@ def run_black_detection(
             line = process.stderr.readline()
             if not line:
                 break
+            print(f"[FFmpeg Blackdetect] {line.strip()}", flush=True)
             all_stderr_lines.append(line)
             
             # 偵測是否被 YouTube 阻擋或重連失敗，主動終止防卡死
