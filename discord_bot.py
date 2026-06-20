@@ -191,6 +191,7 @@ async def process_analysis_result(result: dict, status_msg: discord.Message):
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(
     youtube_url="YouTube 影片網址 (例如 https://youtube.com/live/...)",
+    game_language="遊戲用戶端語言，預設日文 (ja，對應 RESTART) 與英文 (en，對應 FORWARD!)",
     threshold="RESTART 模板比對相似度閾值 (預設 0.65)",
     x_min="偵測區域左邊界比例 (0.0 ~ 1.0, 預設 0.30)",
     x_max="偵測區域右邊界比例 (0.0 ~ 1.0, 預設 0.70)",
@@ -198,9 +199,14 @@ async def process_analysis_result(result: dict, status_msg: discord.Message):
     y_max="偵測區域下邊界比例 (0.0 ~ 1.0, 預設 0.50)",
     scan_duration_limit="限制只分析影片前 N 秒 (0 表示分析整部，預設 0)"
 )
+@app_commands.choices(game_language=[
+    app_commands.Choice(name="日文 (ja) - RESTART", value="ja"),
+    app_commands.Choice(name="英文 (en) - FORWARD!", value="en")
+])
 async def analyze(
     interaction: discord.Interaction,
     youtube_url: str,
+    game_language: str = "ja",
     threshold: float = 0.65,
     x_min: float = 0.30,
     x_max: float = 0.70,
@@ -310,6 +316,7 @@ async def analyze(
         "y_min": y_min,
         "y_max": y_max,
         "scan_duration_limit": scan_duration_limit,
+        "game_language": game_language,
         "video_title": video_title,
         "video_duration": video_duration
     }

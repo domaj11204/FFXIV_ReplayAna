@@ -438,6 +438,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <label for="scan-limit">限制掃描前 N 秒 (0無限制)</label>
                     <input type="number" id="scan-limit" value="0" min="0">
                 </div>
+                <div class="setting-item">
+                    <label for="game-language">遊戲用戶端語言</label>
+                    <select id="game-language" style="width: 100%; padding: 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: var(--text-color); outline: none;">
+                        <option value="ja">日文 (RESTART)</option>
+                        <option value="en">英文 (FORWARD!)</option>
+                    </select>
+                </div>
             </div>
             
             <button class="btn-analyze" id="btn-submit">開始分析影片</button>
@@ -475,6 +482,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const urlInput = document.getElementById('video-url');
         const thresholdInput = document.getElementById('threshold');
         const scanLimitInput = document.getElementById('scan-limit');
+        const gameLanguageInput = document.getElementById('game-language');
         
         const statusBox = document.getElementById('status-box');
         const statusMsg = document.getElementById('status-msg');
@@ -539,6 +547,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         youtube_url: url,
                         threshold: parseFloat(thresholdInput.value),
                         scan_duration_limit: parseFloat(scanLimitInput.value),
+                        game_language: gameLanguageInput.value,
                         template_name: "restart_template.png",
                         x_min: 0.30,
                         x_max: 0.70,
@@ -677,6 +686,7 @@ class AnalyzeRequest(BaseModel):
     scan_duration_limit: float = Field(0.0, description="限制掃描影片的前 N 秒，0.0 表示不限制")
     scan_start_offset: float = Field(0.0, description="限制掃描的起始時間 (秒)，預設為 0.0")
     cookies_content: str | None = Field(None, description="YouTube Cookie 檔案內容，用以避免 YouTube Bot 阻擋驗證")
+    game_language: str = Field("ja", description="遊戲用戶端語言，支援 'ja' (日文) 與 'en' (英文)")
     video_title: str | None = Field(None, description="可選的影片標題，若提供則優先使用")
     video_duration: float | None = Field(None, description="可選的影片長度 (秒)，若提供則優先使用")
     debug: bool | None = Field(None, description="是否啟用除錯模式，保留 Wipe 判斷過程的圖片與日誌")
@@ -1163,8 +1173,11 @@ async def analyze_video(request: AnalyzeRequest):
     except Exception as e:
         print(f"未偵測到 Node.js 執行環境: {e}")
 
-    # 1. 取得並驗證模板圖片
-    template_path = request.template_name
+    # 1. 取得並驗證模板圖片 (依據指定語言載入 ja 或 en 的預設模板)
+    if request.game_language == "en" and request.template_name == "restart_template.png":
+        template_path = "forward_template.png"
+    else:
+        template_path = request.template_name
     gcs_bucket = os.environ.get("GCS_BUCKET_NAME")
     
     # 如果本地找不到模板，且有配置 GCS_BUCKET_NAME，嘗試從 GCS 下載至 /tmp

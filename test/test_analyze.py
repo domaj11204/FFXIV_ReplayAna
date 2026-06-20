@@ -53,6 +53,12 @@ def test_analyze():
         # 預設維持原本的前 10 分鐘限制以節省時間
         scan_duration_limit = 600.0
 
+    # 詢問遊戲語言
+    lang_in = input("請輸入遊戲語言 (ja/en) [預設: ja]: ").strip().lower()
+    game_language = "ja"
+    if lang_in in ("en", "english"):
+        game_language = "en"
+
     # 詢問是否自訂黑屏偵測閥值 (便於本地除錯)
     custom_black = input("是否設定自訂的黑屏偵測參數? (y/N) [預設: No]: ").strip().lower()
     black_pix_th = None
@@ -79,6 +85,7 @@ def test_analyze():
         "y_max": 0.50,
         "scan_start_offset": scan_start_offset,
         "scan_duration_limit": scan_duration_limit,
+        "game_language": game_language,
         "debug": debug_mode
     }
     if black_pix_th is not None:
