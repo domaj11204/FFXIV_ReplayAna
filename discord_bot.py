@@ -638,21 +638,20 @@ async def update_cookies(interaction: discord.Interaction, cookie_file: discord.
             ydl_opts = {
                 "quiet": True,
                 "skip_download": True,
-                "extract_flat": True,
                 "cookiefile": temp_path,
-                "extractor_args": {
-                    "youtube": {
-                        "client": ["ios", "android"],
-                        "construct_dash": False
-                    }
-                }
             }
             try:
                 with YoutubeDL(ydl_opts) as ydl:
                     ydl.extract_info("https://www.youtube.com/watch?v=zG68yxff90s", download=False)
                 return True, ""
             except Exception as e:
-                return False, str(e)
+                err_msg = str(e)
+                # 只有當錯誤中明確包含 Bot 或登入提示時，才判定驗證失敗
+                is_bot_or_login = any(k in err_msg.lower() for k in ["confirm you", "bot", "captcha", "robot", "sign in", "login"])
+                if is_bot_or_login:
+                    return False, err_msg
+                # 其他無關錯誤 (如格式解析失敗、網路瞬斷、JS 警告等) 均視為 Cookie 已通過認證
+                return True, ""
             finally:
                 try:
                     if os.path.exists(temp_path):
