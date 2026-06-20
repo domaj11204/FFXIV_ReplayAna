@@ -156,6 +156,36 @@ async def on_ready():
     except Exception as e:
         print(f"⚠️ 啟動同步 GCS Cookie 失敗：{e}")
 
+async def process_analysis_result(result: dict, status_msg: discord.Message):
+    video_title = result.get("video_title", "未知的影片")
+    video_duration = result.get("video_duration_seconds", 0.0)
+    wipes = result.get("wipes", [])
+    
+    success_embed = discord.Embed(
+        title="分析完成",
+        description=f"影片 **{video_title}** 分析完成。",
+        color=discord.Color.green()
+    )
+    success_embed.add_field(name="影片長度", value=format_time(video_duration), inline=True)
+    success_embed.add_field(name="Wipe數:", value=f"{len(wipes)} 次", inline=True)
+    
+    if wipes:
+        wipes_summary = []
+        for w in wipes[:10]:
+            time_str = format_time(w.get("black_screen_start"))
+            score = w.get("similarity_score", 0.0)
+            wipes_summary.append(f"• **Wipe #{w.get('wipe_number')}**: `{time_str}` (相似度: {score:.2f})")
+            
+        if len(wipes) > 10:
+            wipes_summary.append(f"*...以及其餘 {len(wipes) - 10} 次Wipe*")
+            
+        success_embed.add_field(name="Wipe時間點摘要", value="\n".join(wipes_summary), inline=False)
+    else:
+        success_embed.add_field(name="偵測結果", value="未偵測到任何Wipe影格。", inline=False)
+        
+    view = TimelineView(wipes, video_title, video_duration)
+    await status_msg.edit(embed=success_embed, view=view)
+
 @bot.tree.command(name="analyze", description="分析 FFXIV 影片並辨識滅團 (Wipe) 時間點")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -184,7 +214,7 @@ async def analyze(
     # 建立初步處理狀態的 Embed
     embed = discord.Embed(
         title="FFXIV WIPE分析中",
-        description="正在讀取影片資訊與預估處理時間...\n*此設定僅影響準確度，不影響分析時長*",
+        description="正在讀取影片資訊與預估處理時間...",
         color=discord.Color.blue()
     )
     embed.add_field(name="影片網址", value=youtube_url, inline=False)
@@ -206,6 +236,12 @@ async def analyze(
                 'quiet': True,
                 'skip_download': True,
                 'extract_flat': True,
+                'extractor_args': {
+                    'youtube': {
+                        'client': ['ios', 'android'],
+                        'construct_dash': False
+                    }
+                }
             }
             if os.path.exists("www.youtube.com_cookies.txt"):
                 ydl_opts["cookiefile"] = "www.youtube.com_cookies.txt"
@@ -230,7 +266,8 @@ async def analyze(
         print(f"快速解析影片資訊失敗：{e}")
         
     # 更新 Embed 以顯示預估耗時與標題
-    embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點，這可能需要幾分鐘的時間，請稍候...\n*此設定僅影響準確度，不影響分析時長*"
+    embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點，這可能需要幾分鐘的時間，請稍候..."
+    embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
     embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
     await status_msg.edit(embed=embed)
 
@@ -283,6 +320,188 @@ async def analyze(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
+    # 2.5 判斷是否地端部署主動使用本地共享下載以顯示進度條
+    use_local_shared_download = False
+    if "run.app" not in CLOUD_RUN_URL and youtube_url.startswith("http") and os.path.exists("/app/shared_temp"):
+        use_local_shared_download = True
+
+    if use_local_shared_download:
+        fallback_embed = discord.Embed(
+            title="FFXIV WIPE分析中",
+            description="正在本地安全下載影片以顯示進度條...",
+            color=discord.Color.blue()
+        )
+        fallback_embed.add_field(name="影片網址", value=youtube_url, inline=False)
+        fallback_embed.add_field(name="目前狀態", value="初始化中...", inline=False)
+        fallback_embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
+        fallback_embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
+        
+        await status_msg.edit(embed=fallback_embed)
+        
+        output_filename = None
+        try:
+            # 1. 決定臨時檔案路徑於共享目錄
+            temp_filename = f"ffxiv_temp_{int(time.time())}.mp4"
+            output_filename = os.path.join("/app/shared_temp", temp_filename)
+            
+            # 2. 本地使用最新 Cookie 下載影片 (最低解析度/體積最小)
+            fallback_embed.set_field_at(
+                1, 
+                name="currently_unused", # 避免編輯時錯誤
+                value="正在本地提取影片串流中...",
+                inline=False
+            )
+            fallback_embed.set_field_at(
+                1, 
+                name="目前狀態", 
+                value="正在本地提取影片串流中...",
+                inline=False
+            )
+            await status_msg.edit(embed=fallback_embed)
+            
+            cmd = ["uv", "run", "yt-dlp"]
+            if os.path.exists("www.youtube.com_cookies.txt"):
+                cmd.extend(["--cookies", "www.youtube.com_cookies.txt"])
+            elif os.path.exists("cookies.txt"):
+                cmd.extend(["--cookies", "cookies.txt"])
+            
+            cmd.extend(["--newline", "--progress", "--no-colors"])
+            cmd.extend(["--extractor-args", "youtube:client=ios,android;construct_dash=false"])
+            cmd.extend(["-f", "worstvideo/worst", "-o", output_filename, youtube_url])
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL
+            )
+            
+            # 解析 yt-dlp 輸出的進度條 regex
+            progress_re = re.compile(
+                r"\[download\]\s+([0-9.]+)%\s+of\s+([~0-9.a-zA-Z]+)(?:\s+at\s+([~0-9.a-zA-Z/s]+))?\s+ETA\s+([0-9:]+)"
+            )
+            finished_re = re.compile(
+                r"\[download\]\s+100%\s+of\s+([~0-9.a-zA-Z]+)\s+in\s+([0-9:]+)"
+            )
+
+            def make_progress_bar(percent: float, width: int = 10) -> str:
+                filled_len = int(round(width * percent / 100))
+                bar = "■" * filled_len + "□" * (width - filled_len)
+                return f"[{bar}] {percent:.1f}%"
+
+            async def read_progress():
+                last_update_time = 0.0
+                last_text = ""
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    line_str = line.decode('utf-8', errors='ignore').strip()
+                    
+                    match = progress_re.search(line_str)
+                    if match:
+                        percent_str, size_str, speed_str, eta_str = match.groups()
+                        percent = float(percent_str)
+                        bar_str = make_progress_bar(percent)
+                        speed_info = f" | 速度: {speed_str}" if speed_str else ""
+                        
+                        text = f"正在本地提取影片串流中...\n{bar_str}\n大小: {size_str}{speed_info} | 剩餘時間: {eta_str}"
+                        
+                        now = time.time()
+                        if text != last_text and (now - last_update_time >= 3.0 or percent >= 99.9):
+                            try:
+                                fallback_embed.set_field_at(
+                                    1, 
+                                    name="目前狀態", 
+                                    value=text,
+                                    inline=False
+                                )
+                                await status_msg.edit(embed=fallback_embed)
+                                last_update_time = now
+                                last_text = text
+                            except Exception:
+                                pass
+                        continue
+
+                    match_fin = finished_re.search(line_str)
+                    if match_fin:
+                        size_str, duration_str = match_fin.groups()
+                        bar_str = make_progress_bar(100.0)
+                        text = f"本地提取影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
+                        try:
+                            fallback_embed.set_field_at(
+                                1, 
+                                name="目前狀態", 
+                                value=text,
+                                inline=False
+                            )
+                            await status_msg.edit(embed=fallback_embed)
+                        except Exception:
+                            pass
+                        break
+
+            progress_task = asyncio.create_task(read_progress())
+            try:
+                await process.wait()
+                await asyncio.wait_for(progress_task, timeout=2.0)
+            except Exception:
+                pass
+            finally:
+                progress_task.cancel()
+            
+            if not os.path.exists(output_filename) or os.path.getsize(output_filename) == 0:
+                raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
+                
+            # 3. 以共享影片路徑向地端後端請求分析
+            fallback_embed.set_field_at(
+                1, 
+                name="目前狀態", 
+                value="🎬 影片下載完成！正在啟動地端 FFXIV WIPE 影像分析引擎...",
+                inline=False
+            )
+            await status_msg.edit(embed=fallback_embed)
+            
+            payload["youtube_url"] = f"/app/shared_temp/{temp_filename}"
+            
+            timeout = aiohttp.ClientTimeout(total=900)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(CLOUD_RUN_URL, json=payload, headers=headers) as response2:
+                    if response2.status != 200:
+                        err_body2 = await response2.text()
+                        try:
+                            err_json2 = json.loads(err_body2)
+                            err_detail2 = err_json2.get("detail", err_body2)
+                        except Exception:
+                            err_detail2 = err_body2
+                        raise RuntimeError(f"地端分析共享影片失敗，狀態碼: {response2.status}，原因: {err_detail2}")
+                    result = await response2.json()
+            
+            # 清理本地影片
+            def clean_up_shared():
+                try:
+                    if os.path.exists(output_filename):
+                        os.remove(output_filename)
+                except Exception:
+                    pass
+            asyncio.create_task(asyncio.to_thread(clean_up_shared))
+
+        except Exception as e_shared:
+            try:
+                if output_filename and os.path.exists(output_filename):
+                    os.remove(output_filename)
+            except Exception:
+                pass
+            
+            error_embed = discord.Embed(
+                title="❌ 地端共享下載分析失敗",
+                description=f"執行地端影片下載與分析時發生錯誤：\n`{str(e_shared)}`",
+                color=discord.Color.red()
+            )
+            await status_msg.edit(embed=error_embed)
+            return
+
+        await process_analysis_result(result, status_msg)
+        return
+
     # 3. 發送 API 請求至 Cloud Run
     api_done = asyncio.Event()
     async def update_api_progress():
@@ -291,7 +510,7 @@ async def analyze(
             await asyncio.sleep(10)
             elapsed += 10
             try:
-                embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點 (已分析 {elapsed} 秒)，請稍候...\n*此設定僅影響準確度，不影響分析時長*"
+                embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點 (已分析 {elapsed} 秒)，請稍候..."
                 await status_msg.edit(embed=embed)
             except Exception:
                 pass
@@ -558,38 +777,7 @@ async def analyze(
         progress_task.cancel()
 
     # 4. 分析成功，處理結果
-    video_title = result.get("video_title", "未知的影片")
-    video_duration = result.get("video_duration_seconds", 0.0)
-    wipes = result.get("wipes", [])
-    
-    success_embed = discord.Embed(
-        title="分析完成",
-        description=f"影片 **{video_title}** 分析完成。",
-        color=discord.Color.green()
-    )
-    success_embed.add_field(name="影片長度", value=format_time(video_duration), inline=True)
-    success_embed.add_field(name="Wipe數:", value=f"{len(wipes)} 次", inline=True)
-    
-    # 在 Embed 中列出簡要的時間點列表 (前 10 次，若太多以防溢出)
-    if wipes:
-        wipes_summary = []
-        for w in wipes[:10]:
-            time_str = format_time(w.get("black_screen_start"))
-            score = w.get("similarity_score", 0.0)
-            wipes_summary.append(f"• **Wipe #{w.get('wipe_number')}**: `{time_str}` (相似度: {score:.2f})")
-            
-        if len(wipes) > 10:
-            wipes_summary.append(f"*...以及其餘 {len(wipes) - 10} 次Wipe*")
-            
-        success_embed.add_field(name="Wipe時間點摘要", value="\n".join(wipes_summary), inline=False)
-    else:
-        success_embed.add_field(name="偵測結果", value="未偵測到任何Wipe影格。", inline=False)
-        
-    # 掛載按鈕元件 (TimelineView)
-    view = TimelineView(wipes, video_title, video_duration)
-    
-    # 編輯原本的思考訊息，呈現最終精美結果與按鈕
-    await status_msg.edit(embed=success_embed, view=view)
+    await process_analysis_result(result, status_msg)
 
 @bot.tree.command(name="update_cookies", description="更新本地與雲端儲存桶中的 YouTube Cookies")
 @app_commands.describe(cookie_file="從瀏覽器導出的 cookies.txt 檔案 (純文字 .txt 格式)")

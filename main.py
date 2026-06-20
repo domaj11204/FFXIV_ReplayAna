@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.29"
+VERSION = "v0.0.30"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -875,8 +875,15 @@ def run_black_detection(
             line = process.stderr.readline()
             if not line:
                 break
-            print(f"[FFmpeg Blackdetect] {line.strip()}", flush=True)
+            line_str = line.strip()
             all_stderr_lines.append(line)
+            if len(all_stderr_lines) > 30:
+                all_stderr_lines.pop(0)
+                
+            # 僅輸出與黑屏偵測或連線錯誤相關的重要日誌，避免大量 Late SEI 警告阻塞 I/O
+            is_important = "black_start" in line_str or any(k in line_str.lower() for k in ["http error", "forbidden", "reconnect failed"])
+            if is_important:
+                print(f"[FFmpeg Blackdetect] {line_str}", flush=True)
             
             # 偵測是否被 YouTube 阻擋或重連失敗，主動終止防卡死
             if "http error 403" in line.lower() or "403 forbidden" in line.lower() or "reconnect failed" in line.lower():

@@ -109,11 +109,13 @@ if not errorlevel 1 (
 rem 2.7 Ensure cookies files exist in workspace to guarantee correct Docker mounting
 if not exist cookies.txt type nul > "%cd%\cookies.txt"
 if not exist www.youtube.com_cookies.txt type nul > "%cd%\www.youtube.com_cookies.txt"
+if not exist shared_temp mkdir "%cd%\shared_temp"
 
 rem 3. Prepare backend options (Load environment via --env-file)
 set BACKEND_OPTS=-d -p 8080:8080 --name ffxiv-analyzer-backend --network ffxiv-net --env-file .env
 
 set BACKEND_OPTS=%BACKEND_OPTS% -v "%cd%\cookies.txt:/app/cookies.txt:ro"
+set BACKEND_OPTS=%BACKEND_OPTS% -v "%cd%\shared_temp:/app/shared_temp"
 if exist restart_template.png set BACKEND_OPTS=%BACKEND_OPTS% -v "%cd%\restart_template.png:/app/restart_template.png:ro"
 
 if not "%GOOGLE_APPLICATION_CREDENTIALS%"=="" if exist "%GOOGLE_APPLICATION_CREDENTIALS%" set BACKEND_OPTS=%BACKEND_OPTS% -v "%cd%\%GOOGLE_APPLICATION_CREDENTIALS%:/app/%GOOGLE_APPLICATION_CREDENTIALS%:ro" -e GOOGLE_APPLICATION_CREDENTIALS="/app/%GOOGLE_APPLICATION_CREDENTIALS%"
@@ -134,6 +136,7 @@ set BOT_OPTS=%BOT_OPTS% -e CLOUD_RUN_URL="http://ffxiv-analyzer-backend:8080/ana
 if not "%GOOGLE_APPLICATION_CREDENTIALS%"=="" if exist "%GOOGLE_APPLICATION_CREDENTIALS%" set BOT_OPTS=%BOT_OPTS% -v "%cd%\%GOOGLE_APPLICATION_CREDENTIALS%:/app/%GOOGLE_APPLICATION_CREDENTIALS%:ro" -e GOOGLE_APPLICATION_CREDENTIALS="/app/%GOOGLE_APPLICATION_CREDENTIALS%"
 set BOT_OPTS=%BOT_OPTS% -v "%cd%\cookies.txt:/app/cookies.txt"
 set BOT_OPTS=%BOT_OPTS% -v "%cd%\www.youtube.com_cookies.txt:/app/www.youtube.com_cookies.txt"
+set BOT_OPTS=%BOT_OPTS% -v "%cd%\shared_temp:/app/shared_temp"
 
 rem 6. Start bot container
 echo [INFO] Starting Discord Bot container (ffxiv-analyzer-bot)...

@@ -57,10 +57,12 @@ jobs:
               docker rm ffxiv-discord-bot
             fi
             
-            # 3. 確保本地 cookie 檔案存在，以利雙向掛載同步
+            # 3. 確保本地 cookie 檔案與共享臨時目錄存在，以利雙向掛載同步與地端下載進度條
             touch cookies.txt
             touch www.youtube.com_cookies.txt
+            mkdir -p shared_temp
             COOKIE_MOUNT="-v $(pwd)/cookies.txt:/app/cookies.txt -v $(pwd)/www.youtube.com_cookies.txt:/app/www.youtube.com_cookies.txt"
+            TEMP_MOUNT="-v $(pwd)/shared_temp:/app/shared_temp"
 
             # 4. 啟動 Web UI & API 服務容器
             echo "啟動 Web UI & API 服務容器..."
@@ -70,6 +72,7 @@ jobs:
               --network host \
               --env-file .env \
               $COOKIE_MOUNT \
+              $TEMP_MOUNT \
               ghcr.io/${REPO_LOWER}:latest
               
             # 4. 啟動 Discord Bot 服務容器 (覆蓋 Entrypoint 執行 discord_bot.py)
@@ -80,6 +83,7 @@ jobs:
               --network host \
               --env-file .env \
               $COOKIE_MOUNT \
+              $TEMP_MOUNT \
               ghcr.io/${REPO_LOWER}:latest \
               python discord_bot.py
               
