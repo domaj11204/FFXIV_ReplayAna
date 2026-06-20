@@ -369,7 +369,7 @@ async def analyze(
             
             cmd.extend(["--newline", "--progress", "--no-colors"])
             cmd.extend(["--extractor-args", "youtube:client=ios,android;construct_dash=false"])
-            cmd.extend(["-f", "worstvideo/worst", "-o", output_filename, youtube_url])
+            cmd.extend(["-f", "bestvideo[height<=360]/best[height<=360]/worstvideo/worst", "-o", output_filename, youtube_url])
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -572,7 +572,7 @@ async def analyze(
                                 cmd.extend(["--cookies", "cookies.txt"])
                             
                             cmd.extend(["--newline", "--progress", "--no-colors"])
-                            cmd.extend(["-f", "worstvideo/worst", "-o", output_filename, youtube_url])
+                            cmd.extend(["-f", "bestvideo[height<=360]/best[height<=360]/worstvideo/worst", "-o", output_filename, youtube_url])
                             
                             process = await asyncio.create_subprocess_exec(
                                 *cmd,

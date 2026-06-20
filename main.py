@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.31"
+VERSION = "v0.0.32"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -678,6 +678,9 @@ class AnalyzeRequest(BaseModel):
     cookies_content: str | None = Field(None, description="YouTube Cookie 檔案內容，用以避免 YouTube Bot 阻擋驗證")
     video_title: str | None = Field(None, description="可選的影片標題，若提供則優先使用")
     video_duration: float | None = Field(None, description="可選的影片長度 (秒)，若提供則優先使用")
+    debug: bool | None = Field(None, description="是否啟用除錯模式，保留 Wipe 判斷過程的圖片與日誌")
+    black_pix_th: float | None = Field(None, description="可選的黑屏偵測像素閾值 (0.0~1.0)")
+    black_duration: float | None = Field(None, description="可選的最小黑屏持續時間 (秒)")
 
 # 單個 Wipe 事件的輸出模型
 class WipeEvent(BaseModel):
@@ -827,6 +830,10 @@ def run_black_detection(
     """
     使用 FFmpeg blackdetect 快速掃描整部影片，尋找持續時間 >= min_duration 秒的全黑片段。
     """
+    # 優先使用請求中自訂的黑屏偵測參數
+    actual_pix_th = req.black_pix_th if req.black_pix_th is not None else pix_th
+    actual_min_duration = req.black_duration if req.black_duration is not None else min_duration
+
     crop_x = int(video_w * req.x_min)
     crop_y = int(video_h * req.y_min)
     crop_w = int(video_w * (req.x_max - req.x_min))
@@ -855,7 +862,7 @@ def run_black_detection(
     if req.scan_duration_limit > 0.0:
         cmd.extend(['-t', str(req.scan_duration_limit)])
     cmd.extend([
-        '-vf', f'crop={crop_w}:{crop_h}:{crop_x}:{crop_y},fps=2,blackdetect=d={min_duration}:pix_th={pix_th}',
+        '-vf', f'crop={crop_w}:{crop_h}:{crop_x}:{crop_y},fps=2,blackdetect=d={actual_min_duration}:pix_th={actual_pix_th}',
         '-an',
         '-f', 'null',
         '-'
@@ -962,7 +969,8 @@ def verify_restart_text(
     video_h: int,
     start_time: float,
     template_img: np.ndarray,
-    req: AnalyzeRequest
+    req: AnalyzeRequest,
+    is_debug: bool = False
 ) -> tuple[bool, float, float]:
     """
     在黑屏結束後 30 秒的區間內，使用 FFmpeg 串流裁切中央偵測區並進行多尺度模板匹配，尋找 RESTART 字樣。
@@ -1062,7 +1070,14 @@ def verify_restart_text(
             # 動態計算金色像素門檻 (大於 crop 區域面積 of 1.3%)
             pixel_threshold = int(crop_w * crop_h * 0.013)
             
+            if is_debug:
+                print(f"[Debug] 時間點 {start_time}s 第 {frame_idx} 幀: 金色像素數={gold_pixels}, 門檻值={pixel_threshold}")
+                
             if gold_pixels >= pixel_threshold:
+                if is_debug:
+                    cv2.imwrite(f"debug_wipes/wipe_{start_time}_f{frame_idx}_orig.png", frame)
+                    cv2.imwrite(f"debug_wipes/wipe_{start_time}_f{frame_idx}_mask.png", mask_frame)
+                    
                 # 進行多尺度遮罩模板匹配
                 for scale in scales:
                     sw = int(target_w * scale)
@@ -1078,6 +1093,10 @@ def verify_restart_text(
                     res = cv2.matchTemplate(mask_frame, mask_tpl, cv2.TM_CCOEFF_NORMED)
                     _, max_val, _, _ = cv2.minMaxLoc(res)
                     
+                    if is_debug:
+                        print(f"[Debug] 時間點 {start_time}s 第 {frame_idx} 幀 (尺度 {scale}): 比對得分={max_val:.4f}")
+                        cv2.imwrite(f"debug_wipes/wipe_{start_time}_f{frame_idx}_tpl_s{scale}.png", mask_tpl)
+                        
                     if max_val > best_score:
                         best_score = max_val
                         
@@ -1109,6 +1128,26 @@ def verify_restart_text(
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_video(request: AnalyzeRequest):
+    # 偵測是否啟用除錯模式
+    is_debug = False
+    if request.debug is True:
+        is_debug = True
+    elif os.environ.get("DEBUG_MODE", "").lower() in ("true", "1"):
+        is_debug = True
+    elif os.path.exists(".debug"):
+        is_debug = True
+
+    if is_debug:
+        print("除錯模式已啟用，將會保留 Wipe 判斷過程的圖片與日誌。")
+        debug_dir = "debug_wipes"
+        os.makedirs(debug_dir, exist_ok=True)
+        for f in os.listdir(debug_dir):
+            if f.endswith(".png"):
+                try:
+                    os.remove(os.path.join(debug_dir, f))
+                except Exception:
+                    pass
+
     # 0. 偵測 Node.js 環境狀態
     try:
         node_ver = subprocess.check_output(["node", "-v"], stderr=subprocess.DEVNULL).decode().strip()
@@ -1272,6 +1311,23 @@ async def analyze_video(request: AnalyzeRequest):
             temp_video_path = None
 
     try:
+        if is_debug:
+            try:
+                print(f"[Debug] 嘗試讀取影片第一幀...")
+                cap = cv2.VideoCapture(stream_url)
+                if cap.isOpened():
+                    ret, frame_0 = cap.read()
+                    if ret and frame_0 is not None:
+                        cv2.imwrite("debug_wipes/first_frame.png", frame_0)
+                        print(f"[Debug] 成功儲存第一幀畫面至 debug_wipes/first_frame.png")
+                    else:
+                        print(f"[Debug] 無法讀取影片第一幀畫面")
+                    cap.release()
+                else:
+                    print(f"[Debug] 無法以 OpenCV 開啟 stream_url: {stream_url}")
+            except Exception as e_debug:
+                print(f"[Debug] 儲存第一幀失敗: {e_debug}")
+
         # 3. 第一階段：快速全黑偵測 (FFmpeg blackdetect)
         print("開始執行全黑影格偵測...")
         black_intervals = run_black_detection(
@@ -1297,7 +1353,8 @@ async def analyze_video(request: AnalyzeRequest):
                 video_h=video_h,
                 start_time=black_end,
                 template_img=template_img,
-                req=request
+                req=request,
+                is_debug=is_debug
             )
             
             if match_found:

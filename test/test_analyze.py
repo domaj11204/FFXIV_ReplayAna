@@ -31,6 +31,25 @@ def test_analyze():
             except Exception as e:
                 print(f"讀取 {path} 失敗: {e}")
                 
+    # 詢問是否啟用除錯模式
+    debug_input = input("是否啟用除錯模式以保留 Wipe 判斷圖片? (y/N): ").strip().lower()
+    debug_mode = debug_input in ("y", "yes")
+
+    # 詢問是否自訂黑屏偵測閥值 (便於本地除錯)
+    custom_black = input("是否設定自訂的黑屏偵測參數? (y/N) [預設: No]: ").strip().lower()
+    black_pix_th = None
+    black_duration = None
+    if custom_black in ("y", "yes"):
+        try:
+            th_in = input("請輸入黑屏像素閾值 (0.0~1.0) [預設 0.15]: ").strip()
+            if th_in:
+                black_pix_th = float(th_in)
+            dur_in = input("請輸入最小黑屏持續時間 (秒) [預設 3.0]: ").strip()
+            if dur_in:
+                black_duration = float(dur_in)
+        except ValueError:
+            print("輸入格式錯誤，將使用預設參數。")
+
     # 準備發送給本地後端 API 的 Payload
     payload = {
         "youtube_url": youtube_url,
@@ -40,8 +59,13 @@ def test_analyze():
         "x_max": 0.70,
         "y_min": 0.25,
         "y_max": 0.50,
-        "scan_duration_limit": 600.0  # 測試時限制僅分析前 10 分鐘，節省時間
+        "scan_duration_limit": 600.0,  # 測試時限制僅分析前 10 分鐘，節省時間
+        "debug": debug_mode
     }
+    if black_pix_th is not None:
+        payload["black_pix_th"] = black_pix_th
+    if black_duration is not None:
+        payload["black_duration"] = black_duration
     if cookies_content:
         payload["cookies_content"] = cookies_content
         
