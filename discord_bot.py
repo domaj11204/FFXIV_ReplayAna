@@ -249,7 +249,21 @@ async def analyze(
             await interaction.followup.send(embed=error_embed)
             return
 
-    # 2. 準備 API 請求
+    # 2. 準備 API 請求 (讀取本地最新 Cookie 並塞入 cookies_content 以防被 YouTube 判定為 Bot)
+    cookies_content = None
+    if os.path.exists("www.youtube.com_cookies.txt"):
+        try:
+            with open("www.youtube.com_cookies.txt", "r", encoding="utf-8") as f:
+                cookies_content = f.read()
+        except Exception as e:
+            print(f"讀取 www.youtube.com_cookies.txt 失敗：{e}")
+    elif os.path.exists("cookies.txt"):
+        try:
+            with open("cookies.txt", "r", encoding="utf-8") as f:
+                cookies_content = f.read()
+        except Exception as e:
+            print(f"讀取 cookies.txt 失敗：{e}")
+
     payload = {
         "youtube_url": youtube_url,
         "template_name": "restart_template.png",
@@ -260,6 +274,8 @@ async def analyze(
         "y_max": y_max,
         "scan_duration_limit": scan_duration_limit
     }
+    if cookies_content:
+        payload["cookies_content"] = cookies_content
     
     headers = {
         "Content-Type": "application/json"
@@ -575,13 +591,13 @@ async def analyze(
     # 編輯原本的思考訊息，呈現最終精美結果與按鈕
     await status_msg.edit(embed=success_embed, view=view)
 
-@bot.tree.command(name="update_cookies", description="更新雲端儲存桶中的 YouTube Cookies")
+@bot.tree.command(name="update_cookies", description="更新本地與雲端儲存桶中的 YouTube Cookies")
 @app_commands.describe(cookie_file="從瀏覽器導出的 cookies.txt 檔案 (純文字 .txt 格式)")
 @app_commands.checks.has_permissions(administrator=True)
 async def update_cookies(interaction: discord.Interaction, cookie_file: discord.Attachment):
     # 檢查檔案名稱與副檔名
     if not cookie_file.filename.endswith(".txt"):
-        await interaction.response.send_message("❌ 錯誤：請上傳一個純文字的 `.txt` 格式 Cookie 檔案。", ephemeral=True)
+        await interaction.response.send_message("錯誤：請上傳一個純文字的 .txt 格式 Cookie 檔案。", ephemeral=True)
         return
         
     await interaction.response.defer(ephemeral=True)
@@ -593,27 +609,45 @@ async def update_cookies(interaction: discord.Interaction, cookie_file: discord.
         
         # 2. 檢查是否具有 YouTube Cookie 的基本特徵，確保沒上傳錯檔案
         if "youtube.com" not in content_str:
-            await interaction.followup.send("⚠️ 警告：上傳的檔案內容看起來不包含 youtube.com 的 Cookie 資料，請確認您使用的是有效的 cookies.txt 檔案。", ephemeral=True)
+            await interaction.followup.send("警告：上傳的檔案內容看起來不包含 youtube.com 的 Cookie 資料，請確認您使用的是有效的 cookies.txt 檔案。", ephemeral=True)
             return
             
-        # 3. 取得 GCS 儲存桶名稱
-        bucket_name = "inspiring-bee-481116-m0-ffxiv-assets"
-        
-        # 4. 非同步執行 GCS 上傳
-        def do_upload():
-            if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
-                client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
-            else:
-                client = storage.Client()
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob("cookies.txt")
-            blob.upload_from_string(content_str, content_type="text/plain")
+        # 3. 優先寫入本地 cookies 檔案
+        def save_local_cookies():
+            with open("cookies.txt", "w", encoding="utf-8") as f:
+                f.write(content_str)
+            with open("www.youtube.com_cookies.txt", "w", encoding="utf-8") as f:
+                f.write(content_str)
+
+        await asyncio.to_thread(save_local_cookies)
             
-        await asyncio.to_thread(do_upload)
-        await interaction.followup.send("✅ YouTube Cookies 已成功更新並同步至雲端儲存桶！現在您可以重新執行影像分析了。", ephemeral=True)
+        # 4. 嘗試同步至雲端 GCS 儲存桶 (具備容錯，無憑證時不中斷)
+        bucket_name = "inspiring-bee-481116-m0-ffxiv-assets"
+        gcs_success = False
+        gcs_error_msg = ""
+        try:
+            def do_upload():
+                if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                    client = storage.Client.from_service_account_json(GOOGLE_APPLICATION_CREDENTIALS)
+                else:
+                    client = storage.Client()
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob("cookies.txt")
+                blob.upload_from_string(content_str, content_type="text/plain")
+                
+            await asyncio.to_thread(do_upload)
+            gcs_success = True
+        except Exception as ge:
+            gcs_error_msg = str(ge)
+            print(f"同步至 GCS 儲存桶失敗：{ge}")
+            
+        if gcs_success:
+            await interaction.followup.send("YouTube Cookies 已成功更新並同步至雲端與本地儲存！現在您可以重新執行影像分析了。", ephemeral=True)
+        else:
+            await interaction.followup.send(f"YouTube Cookies 已成功更新至本地！但在同步至雲端時遇到錯誤（可能無 GCP 憑證），但不影響地端使用。雲端錯誤：{gcs_error_msg}", ephemeral=True)
         
     except Exception as e:
-        await interaction.followup.send(f"❌ 更新 Cookie 失敗，詳細原因：`{str(e)}`", ephemeral=True)
+        await interaction.followup.send(f"更新 Cookie 失敗，詳細原因：{str(e)}", ephemeral=True)
 
 @update_cookies.error
 async def update_cookies_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
