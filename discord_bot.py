@@ -116,9 +116,6 @@ def build_progress_embed(
     if current_status:
         embed.add_field(name="目前狀態", value=current_status, inline=False)
         
-    if est_time_str:
-        embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
-        
     return embed
 
 class TimelineView(discord.ui.View):

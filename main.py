@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.1.3"
+VERSION = "v0.1.4"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1441,20 +1441,32 @@ async def analyze_video(request: AnalyzeRequest):
                     similarity_score=0.0
                 ))
 
-        # 5. 過濾兩次 Wipe 間隔小於 5 秒的事件
+        # 5. 過濾重複判定事件 (雙重過濾：黑屏開始時間與文字偵測時間)
         if len(wipes) > 1:
+            # 第一階段：依黑屏開始時間排序並過濾相鄰小於 5 秒的事件
             wipes.sort(key=lambda x: x.black_screen_start)
-            filtered_wipes = [wipes[0]]
+            filtered_by_start = [wipes[0]]
             for w in wipes[1:]:
-                if w.black_screen_start - filtered_wipes[-1].black_screen_start < 5.0:
-                    print(f"-> 忽略與前一次 Wipe 間隔小於 5 秒的重複判定事件：時間 {w.black_screen_start}s，與前一次間隔 {w.black_screen_start - filtered_wipes[-1].black_screen_start:.2f}s")
+                if w.black_screen_start - filtered_by_start[-1].black_screen_start < 5.0:
+                    print(f"-> [過濾] 忽略與前一次 Wipe 黑屏開始時間間隔小於 5 秒的重複判定事件：時間 {w.black_screen_start}s")
                     continue
-                filtered_wipes.append(w)
+                filtered_by_start.append(w)
             
-            # 重新編號
-            for idx, w in enumerate(filtered_wipes):
+            # 第二階段：依 RESTART 文字偵測時間排序並過濾相鄰小於 5 秒的事件
+            filtered_by_start.sort(key=lambda x: x.restart_word_detected_at)
+            filtered_by_detect = [filtered_by_start[0]]
+            for w in filtered_by_start[1:]:
+                if w.restart_word_detected_at > 0 and filtered_by_detect[-1].restart_word_detected_at > 0:
+                    if abs(w.restart_word_detected_at - filtered_by_detect[-1].restart_word_detected_at) < 5.0:
+                        print(f"-> [過濾] 忽略與前一次 Wipe 文字偵測時間間隔小於 5 秒的重複判定事件：時間 {w.restart_word_detected_at}s")
+                        continue
+                filtered_by_detect.append(w)
+            
+            # 最後重新依黑屏開始時間排序，並重新編號
+            filtered_by_detect.sort(key=lambda x: x.black_screen_start)
+            for idx, w in enumerate(filtered_by_detect):
                 w.wipe_number = idx + 1
-            wipes = filtered_wipes
+            wipes = filtered_by_detect
 
         return AnalyzeResponse(
             status="success",
