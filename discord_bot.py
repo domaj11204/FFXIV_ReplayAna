@@ -75,6 +75,53 @@ def format_time(seconds):
     else:
         return f"{m:02d}:{s:02d}"
 
+def build_progress_embed(
+    title: str,
+    description: str,
+    youtube_url: str,
+    video_title: str = None,
+    est_time_str: str = None,
+    game_language: str = "auto",
+    threshold: float = 0.65,
+    scan_start_offset: float = 0.0,
+    scan_duration_limit: float = 0.0,
+    x_min: float = 0.30,
+    x_max: float = 0.70,
+    y_min: float = 0.25,
+    y_max: float = 0.50,
+    current_status: str = None,
+    color: discord.Color = discord.Color.blue()
+) -> discord.Embed:
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=color
+    )
+    if video_title:
+        embed.add_field(name="影片名稱", value=f"[{video_title}]({youtube_url})", inline=False)
+    else:
+        embed.add_field(name="影片網址", value=youtube_url, inline=False)
+        
+    lang_display = "自動判定" if game_language == "auto" else ("日文 (ja)" if game_language == "ja" else "英文 (en)")
+    embed.add_field(name="遊戲語言", value=lang_display, inline=True)
+    embed.add_field(name="相似度閾值", value=str(threshold), inline=True)
+    
+    offset_str = f"{format_time(scan_start_offset)}" if scan_start_offset > 0 else "無 (0s)"
+    limit_str = f"{scan_duration_limit} 秒" if scan_duration_limit > 0 else "無限制"
+    embed.add_field(name="掃描起始點 / 長度限制", value=f"{offset_str} / {limit_str}", inline=False)
+    
+    embed.add_field(name="裁切範圍 (X)", value=f"{x_min} ~ {x_max}", inline=True)
+    embed.add_field(name="裁切範圍 (Y)", value=f"{y_min} ~ {y_max}", inline=True)
+    embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
+    
+    if current_status:
+        embed.add_field(name="目前狀態", value=current_status, inline=False)
+        
+    if est_time_str:
+        embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
+        
+    return embed
+
 class TimelineView(discord.ui.View):
     """
     提供互動式按鈕的前端介面元件。
@@ -162,7 +209,12 @@ async def process_analysis_result(
     game_language: str = "auto",
     threshold: float = 0.65,
     scan_start_offset: float = 0.0,
-    scan_duration_limit: float = 0.0
+    scan_duration_limit: float = 0.0,
+    x_min: float = 0.30,
+    x_max: float = 0.70,
+    y_min: float = 0.25,
+    y_max: float = 0.50,
+    youtube_url: str = ""
 ):
     video_title = result.get("video_title", "未知的影片")
     video_duration = result.get("video_duration_seconds", 0.0)
@@ -171,15 +223,25 @@ async def process_analysis_result(
     is_warning = result.get("text_verification_failed", False)
     color = discord.Color.orange() if is_warning else discord.Color.green()
     title_str = "分析完成 (文字辨識異常)" if is_warning else "分析完成"
-    desc_str = f"影片 **{video_title}** 分析完成，但文字辨識出現異常，已自動退回使用黑屏時間判定。" if is_warning else f"影片 **{video_title}** 分析完成。"
+    
+    if youtube_url:
+        desc_str = f"影片 **[{video_title}]({youtube_url})** 分析完成，但文字辨識出現異常，已自動退回使用黑屏時間判定。" if is_warning else f"影片 **[{video_title}]({youtube_url})** 分析完成。"
+    else:
+        desc_str = f"影片 **{video_title}** 分析完成，但文字辨識出現異常，已自動退回使用黑屏時間判定。" if is_warning else f"影片 **{video_title}** 分析完成。"
     
     success_embed = discord.Embed(
         title=title_str,
         description=desc_str,
         color=color
     )
+    
+    if youtube_url:
+        success_embed.add_field(name="影片名稱", value=f"[{video_title}]({youtube_url})", inline=False)
+    else:
+        success_embed.add_field(name="影片名稱", value=video_title, inline=False)
+        
     success_embed.add_field(name="影片長度", value=format_time(video_duration), inline=True)
-    success_embed.add_field(name="Wipe數:", value=f"{len(wipes)} 次", inline=True)
+    success_embed.add_field(name="Wipe數", value=f"{len(wipes)} 次", inline=True)
     
     lang_display = "自動判定" if game_language == "auto" else ("日文 (ja)" if game_language == "ja" else "英文 (en)")
     success_embed.add_field(name="遊戲語言", value=lang_display, inline=True)
@@ -188,6 +250,11 @@ async def process_analysis_result(
     offset_str = f"{format_time(scan_start_offset)}" if scan_start_offset > 0 else "無 (0s)"
     limit_str = f"{scan_duration_limit} 秒" if scan_duration_limit > 0 else "無限制"
     success_embed.add_field(name="掃描起始點 / 長度限制", value=f"{offset_str} / {limit_str}", inline=False)
+    
+    # 保留分析設定與說明
+    success_embed.add_field(name="裁切範圍 (X)", value=f"{x_min} ~ {x_max}", inline=True)
+    success_embed.add_field(name="裁切範圍 (Y)", value=f"{y_min} ~ {y_max}", inline=True)
+    success_embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
     
     if wipes:
         wipes_summary = []
@@ -249,24 +316,20 @@ async def analyze(
     # Defer 回應：防超時，允許長達 15 分鐘的處理窗口
     await interaction.response.defer(ephemeral=False)
     
-    # 建立初步處理狀態的 Embed
-    embed = discord.Embed(
-        title="FFXIV WIPE分析中",
+    # 建立初步處理狀態的 Embed (階段一：分析影片資訊中)
+    embed = build_progress_embed(
+        title="分析影片資訊中",
         description="正在讀取影片資訊與預估處理時間...",
-        color=discord.Color.blue()
+        youtube_url=youtube_url,
+        game_language=game_language,
+        threshold=threshold,
+        scan_start_offset=scan_start_offset,
+        scan_duration_limit=scan_duration_limit,
+        x_min=x_min,
+        x_max=x_max,
+        y_min=y_min,
+        y_max=y_max
     )
-    embed.add_field(name="影片網址", value=youtube_url, inline=False)
-    
-    lang_display = "自動判定" if game_language == "auto" else ("日文 (ja)" if game_language == "ja" else "英文 (en)")
-    embed.add_field(name="遊戲語言", value=lang_display, inline=True)
-    embed.add_field(name="相似度閾值", value=str(threshold), inline=True)
-    
-    offset_str = f"{format_time(scan_start_offset)}" if scan_start_offset > 0 else "無 (0s)"
-    limit_str = f"{scan_duration_limit} 秒" if scan_duration_limit > 0 else "無限制"
-    embed.add_field(name="掃描起始點 / 長度限制", value=f"{offset_str} / {limit_str}", inline=False)
-    
-    embed.add_field(name="裁切範圍 (X)", value=f"{x_min} ~ {x_max}", inline=True)
-    embed.add_field(name="裁切範圍 (Y)", value=f"{y_min} ~ {y_max}", inline=True)
     status_msg = await interaction.followup.send(embed=embed)
     
     # 異步快速獲取影片資訊，算出預估下載與分析時間
@@ -308,10 +371,22 @@ async def analyze(
     except Exception as e:
         print(f"快速解析影片資訊失敗：{e}")
         
-    # 更新 Embed 以顯示預估耗時與標題
-    embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點，這可能需要幾分鐘的時間，請稍候..."
-    embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
-    embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
+    # 更新 Embed 以顯示預估耗時與標題 (階段三：WIPE分析中)
+    embed = build_progress_embed(
+        title="WIPE分析中",
+        description=f"正在分析影片：**{video_title}**\n正在分析Wipe時間點，這可能需要幾分鐘的時間，請稍候...",
+        youtube_url=youtube_url,
+        video_title=video_title,
+        est_time_str=est_time_str,
+        game_language=game_language,
+        threshold=threshold,
+        scan_start_offset=scan_start_offset,
+        scan_duration_limit=scan_duration_limit,
+        x_min=x_min,
+        x_max=x_max,
+        y_min=y_min,
+        y_max=y_max
+    )
     await status_msg.edit(embed=embed)
 
     # 1. 取得 GCP ID Token (僅在指向 Cloud Run *.run.app 時需要)
@@ -373,24 +448,22 @@ async def analyze(
         use_local_shared_download = True
 
     if use_local_shared_download:
-        fallback_embed = discord.Embed(
-            title="FFXIV WIPE分析中",
+        fallback_embed = build_progress_embed(
+            title="下載影片中",
             description="正在本地安全下載影片以顯示進度條...",
-            color=discord.Color.blue()
+            youtube_url=youtube_url,
+            video_title=video_title,
+            est_time_str=est_time_str,
+            game_language=game_language,
+            threshold=threshold,
+            scan_start_offset=scan_start_offset,
+            scan_duration_limit=scan_duration_limit,
+            x_min=x_min,
+            x_max=x_max,
+            y_min=y_min,
+            y_max=y_max,
+            current_status="初始化中..."
         )
-        fallback_embed.add_field(name="影片網址", value=youtube_url, inline=False)
-        lang_display = "自動判定" if game_language == "auto" else ("日文 (ja)" if game_language == "ja" else "英文 (en)")
-        fallback_embed.add_field(name="遊戲語言", value=lang_display, inline=True)
-        fallback_embed.add_field(name="相似度閾值", value=str(threshold), inline=True)
-        
-        offset_str = f"{format_time(scan_start_offset)}" if scan_start_offset > 0 else "無 (0s)"
-        limit_str = f"{scan_duration_limit} 秒" if scan_duration_limit > 0 else "無限制"
-        fallback_embed.add_field(name="掃描起始點 / 長度限制", value=f"{offset_str} / {limit_str}", inline=False)
-        
-        fallback_embed.add_field(name="目前狀態", value="初始化中...", inline=False)
-        fallback_embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
-        fallback_embed.add_field(name="預估分析時間", value=est_time_str, inline=False)
-        
         await status_msg.edit(embed=fallback_embed)
         
         output_filename = None
@@ -400,7 +473,22 @@ async def analyze(
             output_filename = os.path.join("/app/shared_temp", temp_filename)
             
             # 2. 本地使用最新 Cookie 下載影片 (最低解析度/體積最小)
-            update_embed_field(fallback_embed, "目前狀態", "正在本地提取影片串流中...", False)
+            fallback_embed = build_progress_embed(
+                title="下載影片中",
+                description="正在本地安全下載影片以顯示進度條...",
+                youtube_url=youtube_url,
+                video_title=video_title,
+                est_time_str=est_time_str,
+                game_language=game_language,
+                threshold=threshold,
+                scan_start_offset=scan_start_offset,
+                scan_duration_limit=scan_duration_limit,
+                x_min=x_min,
+                x_max=x_max,
+                y_min=y_min,
+                y_max=y_max,
+                current_status="正在本地提取影片串流中..."
+            )
             await status_msg.edit(embed=fallback_embed)
             
             cmd = ["uv", "run", "yt-dlp"]
@@ -453,7 +541,22 @@ async def analyze(
                         now = time.time()
                         if text != last_text and (now - last_update_time >= 3.0 or percent >= 99.9):
                             try:
-                                update_embed_field(fallback_embed, "目前狀態", text, False)
+                                fallback_embed = build_progress_embed(
+                                    title="下載影片中",
+                                    description="正在本地安全下載影片以顯示進度條...",
+                                    youtube_url=youtube_url,
+                                    video_title=video_title,
+                                    est_time_str=est_time_str,
+                                    game_language=game_language,
+                                    threshold=threshold,
+                                    scan_start_offset=scan_start_offset,
+                                    scan_duration_limit=scan_duration_limit,
+                                    x_min=x_min,
+                                    x_max=x_max,
+                                    y_min=y_min,
+                                    y_max=y_max,
+                                    current_status=text
+                                )
                                 await status_msg.edit(embed=fallback_embed)
                                 last_update_time = now
                                 last_text = text
@@ -467,7 +570,22 @@ async def analyze(
                         bar_str = make_progress_bar(100.0)
                         text = f"本地提取影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
                         try:
-                            update_embed_field(fallback_embed, "目前狀態", text, False)
+                            fallback_embed = build_progress_embed(
+                                title="下載影片中",
+                                description="正在本地安全下載影片以顯示進度條...",
+                                youtube_url=youtube_url,
+                                video_title=video_title,
+                                est_time_str=est_time_str,
+                                game_language=game_language,
+                                threshold=threshold,
+                                scan_start_offset=scan_start_offset,
+                                scan_duration_limit=scan_duration_limit,
+                                x_min=x_min,
+                                x_max=x_max,
+                                y_min=y_min,
+                                y_max=y_max,
+                                current_status=text
+                            )
                             await status_msg.edit(embed=fallback_embed)
                         except Exception:
                             pass
@@ -485,8 +603,23 @@ async def analyze(
             if not os.path.exists(output_filename) or os.path.getsize(output_filename) == 0:
                 raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
                 
-            # 3. 以共享影片路徑向地端後端請求分析
-            update_embed_field(fallback_embed, "目前狀態", "🎬 影片下載完成！正在啟動地端 FFXIV WIPE 影像分析引擎...", False)
+            # 3. 以共享影片路徑向地端後端請求分析 (階段三：WIPE分析中)
+            fallback_embed = build_progress_embed(
+                title="WIPE分析中",
+                description="正在本地安全下載影片以顯示進度條...",
+                youtube_url=youtube_url,
+                video_title=video_title,
+                est_time_str=est_time_str,
+                game_language=game_language,
+                threshold=threshold,
+                scan_start_offset=scan_start_offset,
+                scan_duration_limit=scan_duration_limit,
+                x_min=x_min,
+                x_max=x_max,
+                y_min=y_min,
+                y_max=y_max,
+                current_status="🎬 影片下載完成！正在啟動地端 FFXIV WIPE 影像分析引擎..."
+            )
             await status_msg.edit(embed=fallback_embed)
             
             payload["youtube_url"] = f"/app/shared_temp/{temp_filename}"
@@ -534,19 +667,39 @@ async def analyze(
             game_language=game_language,
             threshold=threshold,
             scan_start_offset=scan_start_offset,
-            scan_duration_limit=scan_duration_limit
+            scan_duration_limit=scan_duration_limit,
+            x_min=x_min,
+            x_max=x_max,
+            y_min=y_min,
+            y_max=y_max,
+            youtube_url=youtube_url
         )
         return
 
     # 3. 發送 API 請求至 Cloud Run
     api_done = asyncio.Event()
     async def update_api_progress():
+        nonlocal embed
         elapsed = 0
         while not api_done.is_set():
             await asyncio.sleep(10)
             elapsed += 10
             try:
-                embed.description = f"正在分析影片：**{video_title}**\n正在分析Wipe時間點 (已分析 {elapsed} 秒)，請稍候..."
+                embed = build_progress_embed(
+                    title="WIPE分析中",
+                    description=f"正在分析影片：**{video_title}**\n正在分析Wipe時間點 (已分析 {elapsed} 秒)，請稍候...",
+                    youtube_url=youtube_url,
+                    video_title=video_title,
+                    est_time_str=est_time_str,
+                    game_language=game_language,
+                    threshold=threshold,
+                    scan_start_offset=scan_start_offset,
+                    scan_duration_limit=scan_duration_limit,
+                    x_min=x_min,
+                    x_max=x_max,
+                    y_min=y_min,
+                    y_max=y_max
+                )
                 await status_msg.edit(embed=embed)
             except Exception:
                 pass
@@ -572,13 +725,23 @@ async def analyze(
                     # 偵測是否被 YouTube Bot 檢測阻擋，且僅在指向雲端 Cloud Run 服務時才啟動 GCS Fallback 橋接（地端不需且無法使用此橋接）
                     # 排除影片本身正在轉檔的情況 (避免轉檔時本地也下載失敗且卡死)
                     if "run.app" in CLOUD_RUN_URL and "轉檔" not in err_detail and ("Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail or "黑屏偵測失敗" in err_detail or "Exit Code" in err_detail):
-                        fallback_embed = discord.Embed(
-                            title="啟動 GCS 儲存桶橋接機制...",
+                        fallback_embed = build_progress_embed(
+                            title="啟動GCS轉傳機制",
                             description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                            youtube_url=youtube_url,
+                            video_title=video_title,
+                            est_time_str=est_time_str,
+                            game_language=game_language,
+                            threshold=threshold,
+                            scan_start_offset=scan_start_offset,
+                            scan_duration_limit=scan_duration_limit,
+                            x_min=x_min,
+                            x_max=x_max,
+                            y_min=y_min,
+                            y_max=y_max,
+                            current_status="初始化中...",
                             color=discord.Color.orange()
                         )
-                        fallback_embed.add_field(name="影片網址", value=youtube_url, inline=False)
-                        fallback_embed.add_field(name="目前狀態", value="初始化中...", inline=False)
                         await status_msg.edit(embed=fallback_embed)
                         
                         output_filename = None
@@ -591,7 +754,23 @@ async def analyze(
                             output_filename = os.path.join(temp_dir, temp_filename)
                             
                             # 2. 本地使用最新 Cookie 下載影片 (最低解析度/體積最小)
-                            update_embed_field(fallback_embed, "目前狀態", "正在本地提取影片串流中...", False)
+                            fallback_embed = build_progress_embed(
+                                title="啟動GCS轉傳機制",
+                                description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                youtube_url=youtube_url,
+                                video_title=video_title,
+                                est_time_str=est_time_str,
+                                game_language=game_language,
+                                threshold=threshold,
+                                scan_start_offset=scan_start_offset,
+                                scan_duration_limit=scan_duration_limit,
+                                x_min=x_min,
+                                x_max=x_max,
+                                y_min=y_min,
+                                y_max=y_max,
+                                current_status="正在本地提取影片串流中...",
+                                color=discord.Color.orange()
+                            )
                             await status_msg.edit(embed=fallback_embed)
                             
                             cmd = ["uv", "run", "yt-dlp"]
@@ -643,7 +822,23 @@ async def analyze(
                                         now = time.time()
                                         if text != last_text and (now - last_update_time >= 3.0 or percent >= 99.9):
                                             try:
-                                                update_embed_field(fallback_embed, "目前狀態", text, False)
+                                                fallback_embed = build_progress_embed(
+                                                    title="啟動GCS轉傳機制",
+                                                    description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                                    youtube_url=youtube_url,
+                                                    video_title=video_title,
+                                                    est_time_str=est_time_str,
+                                                    game_language=game_language,
+                                                    threshold=threshold,
+                                                    scan_start_offset=scan_start_offset,
+                                                    scan_duration_limit=scan_duration_limit,
+                                                    x_min=x_min,
+                                                    x_max=x_max,
+                                                    y_min=y_min,
+                                                    y_max=y_max,
+                                                    current_status=text,
+                                                    color=discord.Color.orange()
+                                                )
                                                 await status_msg.edit(embed=fallback_embed)
                                                 last_update_time = now
                                                 last_text = text
@@ -657,7 +852,23 @@ async def analyze(
                                         bar_str = make_progress_bar(100.0)
                                         text = f"本地提取影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
                                         try:
-                                            update_embed_field(fallback_embed, "目前狀態", text, False)
+                                            fallback_embed = build_progress_embed(
+                                                title="啟動GCS轉傳機制",
+                                                description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                                youtube_url=youtube_url,
+                                                video_title=video_title,
+                                                est_time_str=est_time_str,
+                                                game_language=game_language,
+                                                threshold=threshold,
+                                                scan_start_offset=scan_start_offset,
+                                                scan_duration_limit=scan_duration_limit,
+                                                x_min=x_min,
+                                                x_max=x_max,
+                                                y_min=y_min,
+                                                y_max=y_max,
+                                                current_status=text,
+                                                color=discord.Color.orange()
+                                            )
                                             await status_msg.edit(embed=fallback_embed)
                                         except Exception:
                                             pass
@@ -676,7 +887,23 @@ async def analyze(
                                 raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
                                 
                             # 3. 上傳影片至 GCS 儲存桶
-                            update_embed_field(fallback_embed, "目前狀態", "📤 影片提取成功！正在將影片同步上傳至雲端 GCS 儲存桶...", False)
+                            fallback_embed = build_progress_embed(
+                                title="啟動GCS轉傳機制",
+                                description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                youtube_url=youtube_url,
+                                video_title=video_title,
+                                est_time_str=est_time_str,
+                                game_language=game_language,
+                                threshold=threshold,
+                                scan_start_offset=scan_start_offset,
+                                scan_duration_limit=scan_duration_limit,
+                                x_min=x_min,
+                                x_max=x_max,
+                                y_min=y_min,
+                                y_max=y_max,
+                                current_status="📤 影片提取成功！正在將影片同步上傳至雲端 GCS 儲存桶...",
+                                color=discord.Color.orange()
+                            )
                             await status_msg.edit(embed=fallback_embed)
                             
                             bucket_name = "inspiring-bee-481116-m0-ffxiv-assets"
@@ -694,8 +921,23 @@ async def analyze(
                                 
                             await asyncio.to_thread(upload_to_gcs)
                             
-                            # 4. 以 GCS 影片路徑再次請求 Cloud Run 分析
-                            update_embed_field(fallback_embed, "目前狀態", "🎬 影片同步完成！正在啟動雲端 FFXIV 滅團影像分析引擎...", False)
+                            # 4. 以 GCS 影片路徑再次請求 Cloud Run 分析 (階段三：WIPE分析中)
+                            fallback_embed = build_progress_embed(
+                                title="WIPE分析中",
+                                description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                youtube_url=youtube_url,
+                                video_title=video_title,
+                                est_time_str=est_time_str,
+                                game_language=game_language,
+                                threshold=threshold,
+                                scan_start_offset=scan_start_offset,
+                                scan_duration_limit=scan_duration_limit,
+                                x_min=x_min,
+                                x_max=x_max,
+                                y_min=y_min,
+                                y_max=y_max,
+                                current_status="🎬 影片同步完成！正在啟動雲端 FFXIV 滅團影像分析引擎..."
+                            )
                             await status_msg.edit(embed=fallback_embed)
                             
                             fallback_payload = payload.copy()
@@ -794,7 +1036,12 @@ async def analyze(
         game_language=game_language,
         threshold=threshold,
         scan_start_offset=scan_start_offset,
-        scan_duration_limit=scan_duration_limit
+        scan_duration_limit=scan_duration_limit,
+        x_min=x_min,
+        x_max=x_max,
+        y_min=y_min,
+        y_max=y_max,
+        youtube_url=youtube_url
     )
 
 @bot.tree.command(name="update_cookies", description="更新本地與雲端儲存桶中的 YouTube Cookies")
