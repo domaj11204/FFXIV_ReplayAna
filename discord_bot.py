@@ -342,6 +342,7 @@ async def analyze(
                 'quiet': True,
                 'skip_download': True,
                 'extract_flat': True,
+                'noplaylist': True,
                 'extractor_args': {
                     'youtube': {
                         'client': ['ios', 'android'],
@@ -497,7 +498,7 @@ async def analyze(
             elif os.path.exists("cookies.txt"):
                 cmd.extend(["--cookies", "cookies.txt"])
             
-            cmd.extend(["--newline", "--progress", "--no-colors"])
+            cmd.extend(["--newline", "--progress", "--no-colors", "--no-playlist"])
             cmd.extend(["--extractor-args", "youtube:client=ios,android;construct_dash=false"])
             cmd.extend(["-f", "bestvideo[height<=360]/best[height<=360]/worstvideo/worst", "-o", output_filename, youtube_url])
             
@@ -606,7 +607,7 @@ async def analyze(
             # 3. 以共享影片路徑向地端後端請求分析 (階段三：WIPE分析中)
             fallback_embed = build_progress_embed(
                 title="WIPE分析中",
-                description="正在本地安全下載影片以顯示進度條...",
+                description="影片已下載完成，地端分析引擎正在辨識滅團 (Wipe) 時間點，請稍候...",
                 youtube_url=youtube_url,
                 video_title=video_title,
                 est_time_str=est_time_str,
@@ -779,7 +780,7 @@ async def analyze(
                             elif os.path.exists("cookies.txt"):
                                 cmd.extend(["--cookies", "cookies.txt"])
                             
-                            cmd.extend(["--newline", "--progress", "--no-colors"])
+                            cmd.extend(["--newline", "--progress", "--no-colors", "--no-playlist"])
                             cmd.extend(["-f", "bestvideo[height<=360]/best[height<=360]/worstvideo/worst", "-o", output_filename, youtube_url])
                             
                             process = await asyncio.create_subprocess_exec(
@@ -924,7 +925,7 @@ async def analyze(
                             # 4. 以 GCS 影片路徑再次請求 Cloud Run 分析 (階段三：WIPE分析中)
                             fallback_embed = build_progress_embed(
                                 title="WIPE分析中",
-                                description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                description="影片已成功轉傳，雲端分析引擎正在辨識滅團 (Wipe) 時間點，請稍候...",
                                 youtube_url=youtube_url,
                                 video_title=video_title,
                                 est_time_str=est_time_str,

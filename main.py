@@ -777,6 +777,7 @@ def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) ->
         'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
         'quiet': True,
         'no_warnings': True,
+        'noplaylist': True,
         'extractor_args': {
             'youtube': {
                 'client': ['ios', 'android'],
@@ -790,6 +791,7 @@ def get_youtube_video_info(youtube_url: str, cookies_path: str | None = None) ->
         'format': 'bestvideo[height<=360][protocol*=m3u8]/best[height<=360][protocol*=m3u8]/bestvideo[height<=360][protocol!*=dash]/worstvideo/worst',
         'quiet': True,
         'no_warnings': True,
+        'noplaylist': True,
         'extractor_args': {
             'youtube': {
                 'client': ['ios', 'android'],
@@ -1319,6 +1321,7 @@ async def analyze_video(request: AnalyzeRequest):
                 'format': 'bestvideo[height<=360][fps<=15][protocol*=m3u8]/bestvideo[height<=360][fps<=30][protocol*=m3u8]/best[height<=360][fps<=15][protocol*=m3u8]/best[height<=360][fps<=30][protocol*=m3u8]/bestvideo[height<=360][fps<=15][protocol!*=dash]/bestvideo[height<=360][fps<=30][protocol!*=dash]/worstvideo/worst',
                 'quiet': True,
                 'no_warnings': True,
+                'noplaylist': True,
                 'outtmpl': temp_video_path,
                 'extractor_args': {
                     'youtube': {
