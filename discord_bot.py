@@ -341,7 +341,6 @@ async def analyze(
             ydl_opts = {
                 'quiet': True,
                 'skip_download': True,
-                'extract_flat': True,
                 'noplaylist': True,
                 'extractor_args': {
                     'youtube': {
@@ -476,7 +475,7 @@ async def analyze(
             # 2. 本地使用最新 Cookie 下載影片 (最低解析度/體積最小)
             fallback_embed = build_progress_embed(
                 title="下載影片中",
-                description="正在本地安全下載影片以顯示進度條...",
+                description="正在處理下載與分析中，這可能需要幾分鐘的時間，請稍候...",
                 youtube_url=youtube_url,
                 video_title=video_title,
                 est_time_str=est_time_str,
@@ -544,7 +543,7 @@ async def analyze(
                             try:
                                 fallback_embed = build_progress_embed(
                                     title="下載影片中",
-                                    description="正在本地安全下載影片以顯示進度條...",
+                                    description="正在處理下載與分析中，這可能需要幾分鐘的時間，請稍候...",
                                     youtube_url=youtube_url,
                                     video_title=video_title,
                                     est_time_str=est_time_str,
@@ -573,7 +572,7 @@ async def analyze(
                         try:
                             fallback_embed = build_progress_embed(
                                 title="下載影片中",
-                                description="正在本地安全下載影片以顯示進度條...",
+                                description="正在處理下載與分析中，這可能需要幾分鐘的時間，請稍候...",
                                 youtube_url=youtube_url,
                                 video_title=video_title,
                                 est_time_str=est_time_str,
@@ -607,7 +606,7 @@ async def analyze(
             # 3. 以共享影片路徑向地端後端請求分析 (階段三：WIPE分析中)
             fallback_embed = build_progress_embed(
                 title="WIPE分析中",
-                description="影片已下載完成，地端分析引擎正在辨識滅團 (Wipe) 時間點，請稍候...",
+                description="下載完成，分析Wipe時間點中",
                 youtube_url=youtube_url,
                 video_title=video_title,
                 est_time_str=est_time_str,
@@ -728,7 +727,7 @@ async def analyze(
                     if "run.app" in CLOUD_RUN_URL and "轉檔" not in err_detail and ("Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail or "黑屏偵測失敗" in err_detail or "Exit Code" in err_detail):
                         fallback_embed = build_progress_embed(
                             title="啟動GCS轉傳機制",
-                            description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                            description="偵測到雲端 IP 遭 YouTube 阻擋分析，正在透過GCS轉傳機制處理中，請稍候...",
                             youtube_url=youtube_url,
                             video_title=video_title,
                             est_time_str=est_time_str,
@@ -825,7 +824,7 @@ async def analyze(
                                             try:
                                                 fallback_embed = build_progress_embed(
                                                     title="啟動GCS轉傳機制",
-                                                    description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                                    description="偵測到雲端 IP 遭 YouTube 阻擋分析，正在透過GCS轉傳機制處理中，請稍候...",
                                                     youtube_url=youtube_url,
                                                     video_title=video_title,
                                                     est_time_str=est_time_str,
@@ -855,7 +854,7 @@ async def analyze(
                                         try:
                                             fallback_embed = build_progress_embed(
                                                 title="啟動GCS轉傳機制",
-                                                description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                                description="偵測到雲端 IP 遭 YouTube 阻擋分析，正在透過GCS轉傳機制處理中，請稍候...",
                                                 youtube_url=youtube_url,
                                                 video_title=video_title,
                                                 est_time_str=est_time_str,
@@ -890,7 +889,7 @@ async def analyze(
                             # 3. 上傳影片至 GCS 儲存桶
                             fallback_embed = build_progress_embed(
                                 title="啟動GCS轉傳機制",
-                                description="偵測到雲端 IP 遭 YouTube 阻擋分析。\n正在啟動 Fallback：在本地安全下載影片並上傳至雲端儲存桶以繞過限制...",
+                                description="偵測到雲端 IP 遭 YouTube 阻擋分析，正在透過GCS轉傳機制處理中，請稍候...",
                                 youtube_url=youtube_url,
                                 video_title=video_title,
                                 est_time_str=est_time_str,
@@ -925,7 +924,7 @@ async def analyze(
                             # 4. 以 GCS 影片路徑再次請求 Cloud Run 分析 (階段三：WIPE分析中)
                             fallback_embed = build_progress_embed(
                                 title="WIPE分析中",
-                                description="影片已成功轉傳，雲端分析引擎正在辨識滅團 (Wipe) 時間點，請稍候...",
+                                description="影片已傳至GCS，分析Wipe時間點中",
                                 youtube_url=youtube_url,
                                 video_title=video_title,
                                 est_time_str=est_time_str,
