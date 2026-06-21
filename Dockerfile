@@ -29,7 +29,7 @@ COPY pyproject.toml uv.lock README.md /app/
 RUN uv sync --no-dev --no-install-project
 
 # 拷貝核心程式碼、Discord Bot 與預設的 RESTART 模板圖片
-COPY main.py discord_bot.py restart_template.png /app/
+COPY main.py discord_bot.py restart_template.png forward_template.png /app/
 
 # 暴露埠號 (Cloud Run 會自動映射 PORT 環境變數，預設為 8080)
 EXPOSE 8080
