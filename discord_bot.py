@@ -112,7 +112,6 @@ def build_progress_embed(
     
     embed.add_field(name="裁切範圍 (X)", value=f"{x_min} ~ {x_max}", inline=True)
     embed.add_field(name="裁切範圍 (Y)", value=f"{y_min} ~ {y_max}", inline=True)
-    embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
     
     if current_status:
         embed.add_field(name="目前狀態", value=current_status, inline=False)
@@ -254,7 +253,6 @@ async def process_analysis_result(
     # 保留分析設定與說明
     success_embed.add_field(name="裁切範圍 (X)", value=f"{x_min} ~ {x_max}", inline=True)
     success_embed.add_field(name="裁切範圍 (Y)", value=f"{y_min} ~ {y_max}", inline=True)
-    success_embed.add_field(name="​", value="　　　　　　　　　　　　　　　*此設定僅影響準確度，不影響分析時長*", inline=False)
     
     if wipes:
         wipes_summary = []

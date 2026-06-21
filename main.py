@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.1.2"
+VERSION = "v0.1.3"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1440,6 +1440,21 @@ async def analyze_video(request: AnalyzeRequest):
                     restart_word_detected_at=interval['end'],
                     similarity_score=0.0
                 ))
+
+        # 5. 過濾兩次 Wipe 間隔小於 5 秒的事件
+        if len(wipes) > 1:
+            wipes.sort(key=lambda x: x.black_screen_start)
+            filtered_wipes = [wipes[0]]
+            for w in wipes[1:]:
+                if w.black_screen_start - filtered_wipes[-1].black_screen_start < 5.0:
+                    print(f"-> 忽略與前一次 Wipe 間隔小於 5 秒的重複判定事件：時間 {w.black_screen_start}s，與前一次間隔 {w.black_screen_start - filtered_wipes[-1].black_screen_start:.2f}s")
+                    continue
+                filtered_wipes.append(w)
+            
+            # 重新編號
+            for idx, w in enumerate(filtered_wipes):
+                w.wipe_number = idx + 1
+            wipes = filtered_wipes
 
         return AnalyzeResponse(
             status="success",
