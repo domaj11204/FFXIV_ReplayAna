@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.1.4"
+VERSION = "v0.1.5"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1001,7 +1001,7 @@ def verify_restart_text(
     is_debug: bool = False
 ) -> tuple[bool, float, float]:
     """
-    在黑屏結束後 30 秒的區間內，使用 FFmpeg 串流裁切中央偵測區並進行多尺度模板匹配，尋找 RESTART 字樣。
+    在黑屏結束後 7 秒的區間內，使用 FFmpeg 串流裁切中央偵測區並進行多尺度模板匹配，尋找 RESTART 字樣。
     """
     # 計算裁切區域坐標 (動態適應解析度)
     crop_x = int(video_w * req.x_min)
@@ -1024,7 +1024,7 @@ def verify_restart_text(
     # 建立多個尺度 (0.9, 1.0, 1.1) 以應對些微的比例差異
     scales = [0.9, 1.0, 1.1]
     
-    # 使用 FFmpeg 只讀取特定時間段 [start_time, start_time + 30]，每秒 1 幀，並自動裁切
+    # 使用 FFmpeg 只讀取特定時間段 [start_time, start_time + 7]，每秒 1 幀，並自動裁切
     is_network = stream_url.startswith("http://") or stream_url.startswith("https://")
     ffmpeg_cmd = [
         'ffmpeg',
@@ -1040,7 +1040,7 @@ def verify_restart_text(
         ])
     ffmpeg_cmd.extend([
         '-i', stream_url,
-        '-t', '30',
+        '-t', '7',
         '-filter:v', f'crop={crop_w}:{crop_h}:{crop_x}:{crop_y},fps=1',
         '-f', 'image2pipe',
         '-vcodec', 'rawvideo',
