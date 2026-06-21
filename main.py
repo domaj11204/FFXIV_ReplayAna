@@ -15,7 +15,7 @@ from google.cloud import storage
 import datetime
 import builtins
 
-VERSION = "v0.0.42"
+VERSION = "v0.0.43"
 
 def print(*args, **kwargs):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -714,6 +714,7 @@ class AnalyzeResponse(BaseModel):
     video_title: str
     video_duration_seconds: float
     wipes: list[WipeEvent]
+    text_verification_failed: bool = False
 
 def parse_ydl_info(info: dict) -> dict:
     """
@@ -1087,8 +1088,8 @@ def verify_restart_text(
             
             # HSV 金色過濾
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            lower_gold = np.array([15, 80, 150])
-            upper_gold = np.array([28, 255, 255])
+            lower_gold = np.array([10, 45, 90])
+            upper_gold = np.array([30, 255, 255])
             mask_frame = cv2.inRange(hsv, lower_gold, upper_gold)
             gold_pixels = cv2.countNonZero(mask_frame)
             
@@ -1421,11 +1422,28 @@ async def analyze_video(request: AnalyzeRequest):
             except Exception as e_retry:
                 print(f"自動切換英文模板比對失敗: {e_retry}")
 
+        # 當雙語言文字判定都無法判定出 Wipe，但有偵測到黑屏區間時，退回使用黑屏時間進行判定
+        text_verification_failed = False
+        if len(wipes) == 0 and len(black_intervals) > 0:
+            print("警告：雙語言文字判斷均無法識別出 Wipe，觸發 Fallback 退回機制，將僅以黑屏時間進行判定！")
+            text_verification_failed = True
+            local_wipe_count = 0
+            for interval in black_intervals:
+                local_wipe_count += 1
+                wipes.append(WipeEvent(
+                    wipe_number=local_wipe_count,
+                    black_screen_start=interval['start'],
+                    black_screen_end=interval['end'],
+                    restart_word_detected_at=interval['end'],
+                    similarity_score=0.0
+                ))
+
         return AnalyzeResponse(
             status="success",
             video_title=title,
             video_duration_seconds=duration,
-            wipes=wipes
+            wipes=wipes,
+            text_verification_failed=text_verification_failed
         )
     finally:
         # 確保清理本地臨時影片檔 (除錯模式下保留以供診斷)

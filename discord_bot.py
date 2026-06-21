@@ -168,10 +168,15 @@ async def process_analysis_result(
     video_duration = result.get("video_duration_seconds", 0.0)
     wipes = result.get("wipes", [])
     
+    is_warning = result.get("text_verification_failed", False)
+    color = discord.Color.orange() if is_warning else discord.Color.green()
+    title_str = "分析完成 (文字辨識異常)" if is_warning else "分析完成"
+    desc_str = f"影片 **{video_title}** 分析完成，但文字辨識出現異常，已自動退回使用黑屏時間判定。" if is_warning else f"影片 **{video_title}** 分析完成。"
+    
     success_embed = discord.Embed(
-        title="分析完成",
-        description=f"影片 **{video_title}** 分析完成。",
-        color=discord.Color.green()
+        title=title_str,
+        description=desc_str,
+        color=color
     )
     success_embed.add_field(name="影片長度", value=format_time(video_duration), inline=True)
     success_embed.add_field(name="Wipe數:", value=f"{len(wipes)} 次", inline=True)
@@ -189,7 +194,8 @@ async def process_analysis_result(
         for w in wipes[:10]:
             time_str = format_time(w.get("black_screen_start"))
             score = w.get("similarity_score", 0.0)
-            wipes_summary.append(f"• **Wipe #{w.get('wipe_number')}**: `{time_str}` (相似度: {score:.2f})")
+            score_str = "僅黑屏偵測" if score == 0.0 else f"相似度: {score:.2f}"
+            wipes_summary.append(f"• **Wipe #{w.get('wipe_number')}**: `{time_str}` ({score_str})")
             
         if len(wipes) > 10:
             wipes_summary.append(f"*...以及其餘 {len(wipes) - 10} 次Wipe*")
