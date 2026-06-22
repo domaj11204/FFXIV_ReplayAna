@@ -137,11 +137,11 @@ class TimelineView(discord.ui.View):
             lines.append(f"{time_str} {label}")
         return "\n".join(lines)
 
-    @discord.ui.button(label="複製時間軸 (黑屏點)", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="複製時間軸 (黑畫面時間點)", style=discord.ButtonStyle.primary)
     async def copy_black(self, interaction: discord.Interaction, button: discord.ui.Button):
         timeline = self.generate_timeline(use_restart_time=False)
         await interaction.response.send_message(
-            content=f"**{self.video_title} - 時間軸 (以 Wipe 黑屏為基準)**\n```\n{timeline}\n```",
+            content=f"**{self.video_title} - 時間軸 (以 Wipe 黑畫面為基準)**\n```\n{timeline}\n```",
             ephemeral=True
         )
 
@@ -221,9 +221,9 @@ async def process_analysis_result(
     title_str = "分析完成 (文字辨識異常)" if is_warning else "分析完成"
     
     if youtube_url:
-        desc_str = f"影片 **[{video_title}]({youtube_url})** 分析完成，但文字辨識出現異常，已自動退回使用黑屏時間判定。" if is_warning else f"影片 **[{video_title}]({youtube_url})** 分析完成。"
+        desc_str = f"影片 **[{video_title}]({youtube_url})** 分析完成，但文字辨識出現異常，已自動退回使用黑畫面時間判定。" if is_warning else f"影片 **[{video_title}]({youtube_url})** 分析完成。"
     else:
-        desc_str = f"影片 **{video_title}** 分析完成，但文字辨識出現異常，已自動退回使用黑屏時間判定。" if is_warning else f"影片 **{video_title}** 分析完成。"
+        desc_str = f"影片 **{video_title}** 分析完成，但文字辨識出現異常，已自動退回使用黑畫面時間判定。" if is_warning else f"影片 **{video_title}** 分析完成。"
     
     success_embed = discord.Embed(
         title=title_str,
@@ -256,7 +256,7 @@ async def process_analysis_result(
         for w in wipes[:10]:
             time_str = format_time(w.get("black_screen_start"))
             score = w.get("similarity_score", 0.0)
-            score_str = "僅黑屏偵測" if score == 0.0 else f"相似度: {score:.2f}"
+            score_str = "僅黑畫面偵測" if score == 0.0 else f"相似度: {score:.2f}"
             wipes_summary.append(f"• **Wipe #{w.get('wipe_number')}**: `{time_str}` ({score_str})")
             
         if len(wipes) > 10:
@@ -482,7 +482,7 @@ async def analyze(
                 x_max=x_max,
                 y_min=y_min,
                 y_max=y_max,
-                current_status="正在本地提取影片串流中..."
+                current_status="正在本地下載影片串流中..."
             )
             await status_msg.edit(embed=fallback_embed)
             
@@ -531,7 +531,7 @@ async def analyze(
                         bar_str = make_progress_bar(percent)
                         speed_info = f" | 速度: {speed_str}" if speed_str else ""
                         
-                        text = f"正在本地提取影片串流中...\n{bar_str}\n大小: {size_str}{speed_info} | 剩餘時間: {eta_str}"
+                        text = f"正在本地下載影片串流中...\n{bar_str}\n大小: {size_str}{speed_info} | 剩餘時間: {eta_str}"
                         
                         now = time.time()
                         if text != last_text and (now - last_update_time >= 3.0 or percent >= 99.9):
@@ -563,7 +563,7 @@ async def analyze(
                     if match_fin:
                         size_str, duration_str = match_fin.groups()
                         bar_str = make_progress_bar(100.0)
-                        text = f"本地提取影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
+                        text = f"本地下載影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
                         try:
                             fallback_embed = build_progress_embed(
                                 title="下載影片中",
@@ -596,7 +596,7 @@ async def analyze(
                 progress_task.cancel()
             
             if not os.path.exists(output_filename) or os.path.getsize(output_filename) == 0:
-                raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
+                raise RuntimeError("本地下載影片失敗，檔案未生成或大小為 0。")
                 
             # 3. 以共享影片路徑向地端後端請求分析 (階段三：WIPE分析中)
             fallback_embed = build_progress_embed(
@@ -719,7 +719,7 @@ async def analyze(
                         
                     # 偵測是否被 YouTube Bot 檢測阻擋，且僅在指向雲端 Cloud Run 服務時才啟動 GCS Fallback 橋接（地端不需且無法使用此橋接）
                     # 排除影片本身正在轉檔的情況 (避免轉檔時本地也下載失敗且卡死)
-                    if "run.app" in CLOUD_RUN_URL and "轉檔" not in err_detail and ("Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail or "黑屏偵測失敗" in err_detail or "Exit Code" in err_detail):
+                    if "run.app" in CLOUD_RUN_URL and "轉檔" not in err_detail and ("Sign in to confirm" in err_detail or "bot" in err_detail.lower() or "無法解析 YouTube 影片資訊" in err_detail or "黑畫面偵測失敗" in err_detail or "Exit Code" in err_detail):
                         fallback_embed = build_progress_embed(
                             title="啟動GCS轉傳機制",
                             description="偵測到雲端 IP 遭 YouTube 阻擋分析，正在透過GCS轉傳機制處理中，請稍候...",
@@ -763,7 +763,7 @@ async def analyze(
                                 x_max=x_max,
                                 y_min=y_min,
                                 y_max=y_max,
-                                current_status="正在本地提取影片串流中...",
+                                current_status="正在本地下載影片串流中...",
                                 color=discord.Color.orange()
                             )
                             await status_msg.edit(embed=fallback_embed)
@@ -812,7 +812,7 @@ async def analyze(
                                         bar_str = make_progress_bar(percent)
                                         speed_info = f" | 速度: {speed_str}" if speed_str else ""
                                         
-                                        text = f"正在本地提取影片串流中...\n{bar_str}\n大小: {size_str}{speed_info} | 剩餘時間: {eta_str}"
+                                        text = f"正在本地下載影片串流中...\n{bar_str}\n大小: {size_str}{speed_info} | 剩餘時間: {eta_str}"
                                         
                                         now = time.time()
                                         if text != last_text and (now - last_update_time >= 3.0 or percent >= 99.9):
@@ -845,7 +845,7 @@ async def analyze(
                                     if match_fin:
                                         size_str, duration_str = match_fin.groups()
                                         bar_str = make_progress_bar(100.0)
-                                        text = f"本地提取影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
+                                        text = f"本地下載影片完成！\n{bar_str}\n大小: {size_str} | 總耗時: {duration_str}"
                                         try:
                                             fallback_embed = build_progress_embed(
                                                 title="啟動GCS轉傳機制",
@@ -879,7 +879,7 @@ async def analyze(
                                 progress_task.cancel()
                             
                             if not os.path.exists(output_filename) or os.path.getsize(output_filename) == 0:
-                                raise RuntimeError("本地提取影片失敗，檔案未生成或大小為 0。")
+                                raise RuntimeError("本地下載影片失敗，檔案未生成或大小為 0。")
                                 
                             # 3. 上傳影片至 GCS 儲存桶
                             fallback_embed = build_progress_embed(
@@ -896,7 +896,7 @@ async def analyze(
                                 x_max=x_max,
                                 y_min=y_min,
                                 y_max=y_max,
-                                current_status="📤 影片提取成功！正在將影片同步上傳至雲端 GCS 儲存桶...",
+                                current_status="📤 影片下載成功！正在將影片同步上傳至雲端 GCS 儲存桶...",
                                 color=discord.Color.orange()
                             )
                             await status_msg.edit(embed=fallback_embed)
@@ -993,7 +993,7 @@ async def analyze(
                                 
                             error_embed = discord.Embed(
                                 title="❌ 儲存桶橋接 Fallback 失敗",
-                                description=f"執行影片提取與儲存桶橋接時發生錯誤：\n`{str(e_fallback)}`",
+                                description=f"執行影片下載與儲存桶橋接時發生錯誤：\n`{str(e_fallback)}`",
                                 color=discord.Color.red()
                             )
                             await status_msg.edit(embed=error_embed)
